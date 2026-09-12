@@ -1,0 +1,64 @@
+.venv/
+.claude/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.DS_Store
+
+# ---------------------------------------------------------------------------
+# Generated reports and evidence dumps.
+#
+# These contain real account data: account IDs, resource names and ARNs, IAM
+# usernames, security findings, and (for --json-out) complete raw AWS API
+# responses. Never commit them.
+#
+# The default output directory is covered, plus every report basename the
+# skills emit -- in case someone points --output-dir somewhere else inside
+# the repo.
+# ---------------------------------------------------------------------------
+reports/output/
+out/
+
+architecture-discovery.*
+cost-optimization.*
+security-review.*
+network-traffic-analysis.*
+well-architected-evidence.*
+organizations-posture.*
+dr-readiness.*
+
+*-evidence.json
+*-inventory.json
+
+*.pdf
+!tests/fixtures/**/*.pdf
+
+# The report basenames above are deliberately unanchored, so a stray
+# --output-dir anywhere in the repo is still ignored. That also matched
+# skills/aws-well-architected-review/references/pillars/cost-optimization.md,
+# a tracked source doc -- skill reference content is never generated output,
+# so re-include it.
+!skills/**/references/**/*.md
+
+# ---------------------------------------------------------------------------
+# Environments, editors, and tool caches beyond the ones above.
+# ---------------------------------------------------------------------------
+venv/
+env/
+.env
+.env.*
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+.idea/
+.vscode/
+*.swp
+*.log
+
+# Packaged copies of this repo (see the sibling .zip in the workspace).
+*.zip

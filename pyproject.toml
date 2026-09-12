@@ -1,0 +1,43 @@
+# Tooling configuration only -- this plugin is not a distributable Python
+# package. Skills invoke their scripts by path, and the shared/ layer is
+# imported via the repo root on sys.path (see tests/conftest.py).
+#
+# Centralized here so a bare `ruff check` / `pytest` locally behaves
+# identically to CI. Previously CI passed `--select F` inline while a
+# local `ruff check` used ruff's defaults, reporting 91 findings CI
+# ignored -- which trains people to ignore the linter.
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = [".venv", "reports"]
+
+[tool.ruff.lint]
+# Correctness rules only. Deliberately NOT enforcing formatting or import
+# ordering: this repo has no formatter in CI, and churn there would bury
+# the findings that matter.
+#   F   pyflakes      -- unused imports, undefined names, unused variables
+#   B   bugbear       -- likely bugs (caught a blind `pytest.raises(Exception)`)
+#   DTZ flake8-datetimez -- naive datetime use, which matters for AWS time windows
+#   S   bandit subset -- security anti-patterns
+select = ["F", "B", "DTZ", "S110", "S102", "S307"]
+ignore = [
+    # Skill scripts must mutate sys.path before importing shared/, because
+    # they run standalone by path rather than as an installed package.
+    "E402",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests legitimately construct naive datetimes as fixture data and assert
+# on broad behaviour of decorators under test.
+"tests/*" = ["DTZ001", "DTZ005", "S101"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Surface warnings rather than hiding them; AWS SDK deprecations are how
+# we learn an API call is on its way out.
+filterwarnings = [
+    "default",
+    "ignore::DeprecationWarning:botocore.*",
+]
+addopts = "--strict-markers"

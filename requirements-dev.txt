@@ -1,0 +1,7 @@
+-r requirements.txt
+pytest>=8.0
+moto[ec2,ecs,eks,rds,s3,iam,sts,elbv2]>=5.0
+# Used by tests/test_skill_integrity.py to parse SKILL.md frontmatter.
+# Pinned explicitly rather than relied on transitively via moto.
+PyYAML>=6.0
+ruff>=0.6
