@@ -2,6 +2,29 @@
 
 Notable changes to this plugin. Versions track `.claude-plugin/plugin.json`.
 
+## [1.0.0]
+
+First stable release. Promotes the 0.2.0 feature set -- nine skills, the
+shared collector layer, and Markdown/HTML/PDF reporting -- to 1.0 with no
+functional changes: the full CI gate (256 tests, `ruff`, byte-compile, and a
+`--help` smoke test of every skill script) passes clean, and the read-only
+API contract and HTML-escaping contract are settled enough to commit to
+semantic versioning from here.
+
+### Fixed
+
+- `.gitignore` excluded a tracked source file. The report-basename patterns
+  are deliberately unanchored so a stray `--output-dir` anywhere in the repo
+  is still ignored, but `cost-optimization.*` also matched
+  `skills/aws-well-architected-review/references/pillars/cost-optimization.md`.
+  Skill reference content is never generated output, so it is now re-included
+  explicitly.
+
+### Changed
+
+- `.gitignore` also covers virtualenv, editor, coverage, and build-artifact
+  paths alongside the existing report and evidence rules.
+
 ## [0.2.0]
 
 ### Added
