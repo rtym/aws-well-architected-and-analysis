@@ -33,10 +33,12 @@ Read-only: every AWS call is a `Describe*`/`List*`/`Get*` operation. See
 ## Before you start
 
 Load the resource taxonomy so you know which viewpoint each resource
-belongs to and what a good architecture doc calls out:
+belongs to and what a good architecture doc calls out, plus the diagram
+conventions any diagram you hand-author has to follow:
 
 ```
 view ${CLAUDE_PLUGIN_ROOT}/skills/aws-architecture-discovery/references/viewpoints.md
+view ${CLAUDE_PLUGIN_ROOT}/skills/aws-lucid-diagrams/references/diagram-conventions.md
 ```
 
 Confirm with the user (if not already stated):
@@ -82,9 +84,16 @@ the user asks for something the script doesn't generate automatically --
 a compute/container topology diagram, a data-flow diagram between tiers,
 a C4-style container diagram -- read `references/viewpoints.md` for the
 mapping from AWS resource types to viewpoint elements, then hand-author the
-additional Mermaid diagram(s) from the JSON inventory. Consider using the
-`architecture:architecture-diagram` or `architecture:c4-diagram` skills for
-this if they're installed -- they know the Mermaid conventions in depth.
+additional Mermaid diagram(s) from the JSON inventory.
+
+Hand-authored diagrams follow the same four rules the generated one does
+(the `diagram-conventions.md` loaded above): every edge labelled with its real
+connectivity (protocol and port for an application link, route table and
+destination range for a routing one, direction via the arrowheads), no
+unexplained abbreviation or unmeasurable adjective, one clause per label,
+and a `subgraph Legend[...]` inventorying the symbols used. Reading
+`vpc_topology_mermaid()` in `scripts/discover.py` is the fastest way to
+match the house style -- it implements all four.
 
 ### Step 4 -- Summarize for the user
 
@@ -108,6 +117,9 @@ default encryption.
    silently dropped).
 2. The Mermaid diagram block is valid (starts with `flowchart TB`, every
    node ID is a valid Mermaid identifier -- the script already sanitizes
-   AWS IDs by replacing `-` with `_`).
-3. PDF output actually opens (`file reports/output/architecture-discovery.pdf`
+   AWS IDs).
+3. Every edge in every diagram, generated or hand-authored, carries a
+   label describing the connection, and each diagram ends with a legend
+   listing exactly the symbol kinds it used.
+4. PDF output actually opens (`file reports/output/architecture-discovery.pdf`
    should say `PDF document`).

@@ -19,7 +19,7 @@ with charts.
 | `aws-well-architected-review` | `skills/aws-well-architected-review/` | Collects evidence across all six Well-Architected pillars and scores best-practice questions against it |
 | `aws-cost-optimization` | `skills/aws-cost-optimization/` | Cost Explorer trends, RI/Savings Plans coverage, rightsizing, idle-resource waste, and a prioritized savings strategy |
 | `aws-security-review` | `skills/aws-security-review/` | GuardDuty, Security Hub, IAM Access Analyzer, AWS Config, IAM hygiene, S3 exposure, wide-open security groups |
-| `aws-architecture-discovery` | `skills/aws-architecture-discovery/` | Full infrastructure inventory (VPC/network, compute, containers, data stores) with Mermaid topology diagrams |
+| `aws-architecture-discovery` | `skills/aws-architecture-discovery/` | Full infrastructure inventory (VPC/network, compute, containers, data stores) with Mermaid topology diagrams -- every edge labelled with its route/protocol, plus a legend |
 | `aws-architecture-gap-analysis` | `skills/aws-architecture-gap-analysis/` | Synthesizes the other skills' output into one prioritized gap analysis |
 | `aws-network-traffic-analysis` | `skills/aws-network-traffic-analysis/` | VPC Flow Logs (via CloudWatch Logs Insights) + GuardDuty network findings: top talkers, rejected traffic, port-scan heuristic, anomalies |
 | `aws-lucid-diagrams` | `skills/aws-lucid-diagrams/` | Draws polished AWS architecture diagrams in Lucidchart (via the Lucid MCP connector) using real AWS service icons, laid out to minimize crossings, with a self-check visual pass before handoff |

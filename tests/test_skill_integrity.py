@@ -124,3 +124,19 @@ def test_skill_references_directory_has_no_orphans(skill_md):
         if ref.name not in text and ref.relative_to(ROOT).as_posix() not in text
     ]
     assert not orphans, f"{skill_md} never references: {orphans}"
+
+
+DIAGRAM_SKILLS = ("aws-architecture-discovery", "aws-lucid-diagrams")
+DIAGRAM_CONVENTIONS = "skills/aws-lucid-diagrams/references/diagram-conventions.md"
+
+
+@pytest.mark.parametrize("skill_name", DIAGRAM_SKILLS)
+def test_diagram_skills_load_the_shared_diagram_conventions(skill_name):
+    """Both skills that draw diagrams must load the one document defining
+    the conventions (labelled edges, expanded abbreviations, concise labels,
+    legend). If one stops referencing it, the two deliverables drift apart."""
+    assert (ROOT / DIAGRAM_CONVENTIONS).exists()
+    text = (SKILLS_DIR / skill_name / "SKILL.md").read_text()
+    assert DIAGRAM_CONVENTIONS in text, (
+        f"{skill_name}/SKILL.md no longer loads {DIAGRAM_CONVENTIONS}"
+    )

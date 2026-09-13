@@ -2,6 +2,42 @@
 
 Notable changes to this plugin. Versions track `.claude-plugin/plugin.json`.
 
+## [1.1.0]
+
+### Added
+
+- Tests pinning the diagram contract: no unlabelled edge is ever emitted,
+  subnet Public/Private/Isolated classification follows the route tables
+  (including the main-table fallback and IPv6 default routes), the legend
+  lists exactly the symbol kinds drawn, generated Mermaid is structurally
+  valid (balanced subgraphs, no edge to an undeclared node), labels cannot
+  break out of their quotes, and both diagramming skills still load the
+  shared conventions document.
+
+### Changed
+
+- **Diagram conventions are now enforced across both diagramming skills.**
+  A new shared reference,
+  `skills/aws-lucid-diagrams/references/diagram-conventions.md`, defines four
+  rules that `aws-lucid-diagrams` and `aws-architecture-discovery` both load:
+  every relationship carries its real connectivity detail (destination range,
+  route table, protocol/port, direction), abbreviations are expanded and
+  unmeasurable adjectives cut, labels stay to one clause, and every diagram
+  ends with a legend inventorying the symbols it used and what each means.
+- **`vpc_topology_mermaid()` rewritten** to implement those rules for the
+  generated per-region topology diagram. It now reads route tables to
+  classify each subnet as Public, Private or Isolated and labels the edge
+  with the route that justifies it (`0.0.0.0/0 via rtb-0a1: outbound only,
+  replies allowed`); draws VPC endpoints, VPC peering connections and Transit
+  Gateway attachments, each labelled with its protocol or attachment id;
+  writes full service names instead of `IGW`/`NAT`; puts the public internet
+  and out-of-region peers in an "Outside this region" box; and appends a
+  legend listing only the symbol kinds actually on the canvas, with counts.
+- `aws-lucid-diagrams` gained Lucid-specific guidance for labelled connectors
+  (label placement clearance, arrowheads matching traffic direction) and for
+  building the legend container, plus quality checks and visual-re-check
+  items covering both.
+
 ## [1.0.0]
 
 First stable release. Promotes the 0.2.0 feature set -- nine skills, the

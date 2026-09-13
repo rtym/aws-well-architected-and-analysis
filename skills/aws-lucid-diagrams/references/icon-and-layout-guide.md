@@ -102,6 +102,42 @@ invalid value.) Passing a lowercase JSON-style value to `lucid_add_line`
 fails with a validation error naming the allowed values -- if you see
 that, this mismatch is almost certainly why.
 
+## Labelled connectors and the legend container
+
+The content rules live in `diagram-conventions.md`; this is how to satisfy
+them in Lucid specifically.
+
+**Connector labels.** Every line needs text on it (route + protocol +
+direction). The label goes in the line's own text field -- check the exact
+field name in `lucid://skills/diagram-specification` for Standard Import
+JSON, and in the tool schema for `lucid_add_line`/`lucid_edit_item` when
+editing a live document; the two formats differ here the same way their
+endpoint-style enums do. Practical constraints:
+
+- Keep the label to one clause (~40 characters). Lucid centres it on the
+  line, so a long label overlaps whatever the line passes near.
+- Leave at least **80px** of clear space along the segment the label sits
+  on -- treat a labelled connector as needing roughly the same clearance as
+  a small shape.
+- Set the arrowheads to match reality: one endpoint `"Arrow"` for one-way
+  traffic, both endpoints `"Arrow"` for bidirectional (`"arrow"` lowercase
+  in Standard Import JSON -- see the enum table above).
+
+**Legend container.** Place a plain container (not an AWS group shape) in
+the bottom-left of the canvas, outside every Region/VPC container, holding:
+
+- one instance of each icon actually used on the board, at roughly half the
+  size of the real ones, each with its count and one-line meaning as text
+  beside it;
+- one text block explaining the arrow notation.
+
+Lay it out as a single column with ~40px between rows, size the container
+so its children clear the edges by the usual 80px, and set
+`"assistedLayout": false` on it so the paired icon/text rows don't get
+re-flowed. Build it last, once you know which icons the board actually
+contains -- a legend listing an icon that isn't on the canvas is a defect
+the visual re-check should catch.
+
 ## Crossing-minimization layout rules
 
 Applied roughly in this order -- each rule alone removes a class of
@@ -138,6 +174,10 @@ failure modes crossing-minimization rules don't fully prevent by
 construction:
 
 - A label longer than its shape's width, spilling into a neighboring shape.
+- A connector with no label at all, or a connector label overlapping a
+  line, a shape, or another label.
+- A legend that is missing, clipped, or out of step with the icons actually
+  drawn (an entry with no shape behind it, or a shape kind with no entry).
 - Two connectors that cross more than once between the same pair of
   groups (usually fixable by swapping the vertical order of two sibling
   shapes).

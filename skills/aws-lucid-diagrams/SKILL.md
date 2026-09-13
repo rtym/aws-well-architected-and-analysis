@@ -62,16 +62,23 @@ Don't loop on calling `authenticate` yourself expecting a URL to appear --
 its response only ever points back at `/mcp`. Wait for the user to
 confirm before re-running `ToolSearch("Lucid")`.
 
-### 2. Load the icon and layout reference
+### 2. Load the icon/layout reference and the diagram conventions
 
 ```
 view ${CLAUDE_PLUGIN_ROOT}/skills/aws-lucid-diagrams/references/icon-and-layout-guide.md
+view ${CLAUDE_PLUGIN_ROOT}/skills/aws-lucid-diagrams/references/diagram-conventions.md
 ```
 
-This has the resource-type -> AWS icon-category mapping, the concrete
+The first has the resource-type -> AWS icon-category mapping, the concrete
 Lucid shape-library resource URIs, the container-padding/containment
 numbers, the endpoint-style gotcha, and the crossing-minimization layout
 rules -- read it before placing shapes, not after.
+
+The second is the four content rules every diagram in this plugin follows,
+and they are not optional here: **every connector carries its connectivity
+detail** (route, protocol/port, direction), **abbreviations are expanded**
+and buzzwords cut, **labels stay to one clause**, and **the board carries a
+legend** inventorying the icons used and what each means.
 
 ### 3. If you'll be hand-authoring Standard Import JSON, read the spec resource first
 
@@ -168,6 +175,21 @@ Gateway attachments) -- don't connect everything to everything. Manually
 position nodes so connector lines route orthogonally around containers
 rather than through them (see the layout rules in the reference doc).
 
+**Give every connector a text label** stating what crosses it -- destination
+range and route table for a routing relationship, protocol and port for an
+application one, and an arrowhead on each end that actually carries traffic
+(`0.0.0.0/0 via rtb-0a1: outbound only, replies allowed`; `PostgreSQL, TCP
+5432, TLS required`). Take the values from the inventory; where it doesn't
+record a port, label the relationship it does record rather than inventing
+one. Keep each label to a single clause, and expand abbreviations in the
+node/icon labels (`NAT Gateway (Network Address Translation)`).
+
+**Then add the legend container**, bottom-left of the canvas: one small
+instance of each icon actually used, with its count and a one-line meaning
+beside it, plus a line explaining the arrow notation. See rule 4 in
+`references/diagram-conventions.md` for the exact shape of it. A board
+without a legend is not done.
+
 Before calling `lucid_create_diagram_from_specification`, run your JSON
 through `lucid_validate_diagram_specification` -- it catches both
 structural mistakes (which would otherwise fail the import outright with
@@ -191,7 +213,11 @@ reliable than a plain text-extraction OCR tool for judging layout quality.
 Look specifically for:
 
 - Overlapping or truncated labels (text spilling out of its shape or
-  behind another shape).
+  behind another shape), including connector labels sitting on top of a
+  line or each other.
+- Any connector with no label, or a label too small to read at normal zoom.
+- A legend that is missing, clipped, or lists an icon the diagram doesn't
+  actually use.
 - Icons rendered too small to identify at a normal zoom level.
 - Connector lines crossing through unrelated shapes, or crossing each
   other more than necessary between two groups.
@@ -213,8 +239,9 @@ alongside it.
 ## Output
 
 A Lucid document (link/ID from the MCP tool) using real AWS architecture
-icons, organized by network/compute/data grouping, verified visually for
-legibility -- plus an optional exported PNG/PDF.
+icons, organized by network/compute/data grouping, every connector labelled
+with its connectivity detail, a legend inventorying the icons used, and
+verified visually for legibility -- plus an optional exported PNG/PDF.
 
 ## Quality checks
 
@@ -222,11 +249,18 @@ legibility -- plus an optional exported PNG/PDF.
    box, arrow, or cloud shape.
 2. VPC/subnet boundaries are represented as containers, not just labeled
    rectangles floating disconnected from their contents.
-3. You performed at least one visual re-check pass (Step 4) before
+3. Every connector has a label naming the route, protocol/port or
+   attachment it represents, and arrowheads that match the real direction
+   of traffic.
+4. The board has a legend covering exactly the icon kinds on the canvas,
+   each with a count and a plain-language meaning, plus the arrow notation.
+5. No unexplained abbreviation and no unmeasurable adjective ("scalable",
+   "highly available") appears anywhere on the canvas.
+6. You performed at least one visual re-check pass (Step 4) before
    declaring the diagram done, and can state what you looked for.
-4. If a viewpoint has more than ~25-30 resources, it was split into
+7. If a viewpoint has more than ~25-30 resources, it was split into
    multiple diagrams rather than left as one illegible canvas.
-5. For a brand-new diagram, `lucid_validate_diagram_specification` was run
+8. For a brand-new diagram, `lucid_validate_diagram_specification` was run
    and came back clean before `lucid_create_diagram_from_specification`
    was called. For an edit to an existing diagram, `fetch` was used to get
    real item IDs before any `lucid_edit_item`/`lucid_add_line` call

@@ -7,6 +7,7 @@ every report still renders to Markdown/HTML/valid PDF bytes.
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -109,6 +110,286 @@ def test_discover_build_report_handles_zero_regions_scanned():
     md = _assert_renders(report)
     assert "Global Resources" in md
 
+
+# The diagram contract these tests pin down is documented in
+# skills/aws-lucid-diagrams/references/diagram-conventions.md: every edge
+# labelled with real connectivity, abbreviations expanded, one clause per
+# label, and a legend inventorying the symbols used.
+FULL_NETWORK = {
+    "Vpcs": [{"VpcId": "vpc-aaa", "CidrBlock": "10.0.0.0/16"}],
+    "Subnets": [
+        {"SubnetId": "subnet-pub", "VpcId": "vpc-aaa", "CidrBlock": "10.0.1.0/24", "AvailabilityZone": "us-east-1a"},
+        {"SubnetId": "subnet-priv", "VpcId": "vpc-aaa", "CidrBlock": "10.0.2.0/24", "AvailabilityZone": "us-east-1a"},
+        {"SubnetId": "subnet-iso", "VpcId": "vpc-aaa", "CidrBlock": "10.0.3.0/24", "AvailabilityZone": "us-east-1b"},
+    ],
+    "RouteTables": [
+        {
+            "RouteTableId": "rtb-pub",
+            "VpcId": "vpc-aaa",
+            "Associations": [{"SubnetId": "subnet-pub"}],
+            "Routes": [{"DestinationCidrBlock": "0.0.0.0/0", "GatewayId": "igw-1"}],
+        },
+        {
+            "RouteTableId": "rtb-priv",
+            "VpcId": "vpc-aaa",
+            "Associations": [{"SubnetId": "subnet-priv"}],
+            "Routes": [{"DestinationCidrBlock": "0.0.0.0/0", "NatGatewayId": "nat-1"}],
+        },
+        {
+            "RouteTableId": "rtb-main",
+            "VpcId": "vpc-aaa",
+            "Associations": [{"Main": True}],
+            "Routes": [{"DestinationCidrBlock": "10.0.0.0/16", "GatewayId": "local"}],
+        },
+    ],
+    "InternetGateways": [{"InternetGatewayId": "igw-1", "Attachments": [{"VpcId": "vpc-aaa"}]}],
+    "NatGateways": [
+        {
+            "NatGatewayId": "nat-1",
+            "VpcId": "vpc-aaa",
+            "SubnetId": "subnet-pub",
+            "NatGatewayAddresses": [{"PublicIp": "52.1.2.3"}],
+        }
+    ],
+    "VpcEndpoints": [
+        {
+            "VpcEndpointId": "vpce-1",
+            "VpcId": "vpc-aaa",
+            "VpcEndpointType": "Interface",
+            "ServiceName": "com.amazonaws.us-east-1.secretsmanager",
+            "SubnetIds": ["subnet-priv"],
+        },
+        {
+            "VpcEndpointId": "vpce-2",
+            "VpcId": "vpc-aaa",
+            "VpcEndpointType": "Gateway",
+            "ServiceName": "com.amazonaws.us-east-1.s3",
+            "RouteTableIds": ["rtb-priv"],
+        },
+    ],
+    "VpcPeeringConnections": [
+        {
+            "VpcPeeringConnectionId": "pcx-9",
+            "RequesterVpcInfo": {"VpcId": "vpc-aaa", "CidrBlock": "10.0.0.0/16", "OwnerId": "111122223333"},
+            "AccepterVpcInfo": {"VpcId": "vpc-zzz", "CidrBlock": "10.9.0.0/16", "OwnerId": "444455556666"},
+        }
+    ],
+    "TransitGatewayAttachments": [
+        {"TransitGatewayAttachmentId": "tgw-attach-7", "TransitGatewayId": "tgw-7", "ResourceId": "vpc-aaa"}
+    ],
+}
+
+
+def _edges(diagram: str) -> list[str]:
+    return [ln.strip() for ln in diagram.splitlines() if "-->" in ln or ln.strip().startswith("---")]
+
+
+def test_vpc_topology_labels_every_edge():
+    """An unlabelled connector says only 'these are related', which the
+    reader already assumed -- the generator must never emit one."""
+    diagram = discover.vpc_topology_mermaid("us-east-1", FULL_NETWORK)
+    edges = _edges(diagram)
+    assert edges, "expected connectors in a fully-populated network"
+    unlabelled = [e for e in edges if '|"' not in e]
+    assert not unlabelled, f"connectors with no connectivity label: {unlabelled}"
+
+
+def test_vpc_topology_edge_labels_carry_connectivity_detail():
+    diagram = discover.vpc_topology_mermaid("us-east-1", FULL_NETWORK)
+    # Routing: destination range + the route table that provides it.
+    assert '0.0.0.0/0 via rtb-pub: any protocol, inbound and outbound' in diagram
+    assert '0.0.0.0/0 via rtb-priv: outbound only, replies allowed' in diagram
+    # Address translation, protocol/port, and cross-network attachments.
+    assert "egress translated to 52.1.2.3" in diagram
+    assert "HTTPS 443 to secretsmanager" in diagram
+    assert "pcx-9" in diagram and "not transitive" in diagram
+    assert "attachment tgw-attach-7" in diagram
+
+
+def test_vpc_topology_classifies_subnets_from_route_tables():
+    diagram = discover.vpc_topology_mermaid("us-east-1", FULL_NETWORK)
+    assert "Public subnet subnet-pub" in diagram
+    assert "Private subnet subnet-priv" in diagram
+    # No default route in the main table it falls back to -> isolated.
+    assert "Isolated subnet subnet-iso" in diagram
+
+
+def test_vpc_topology_expands_abbreviations():
+    """A reader without AWS fluency has to be able to follow the diagram."""
+    diagram = discover.vpc_topology_mermaid("us-east-1", FULL_NETWORK)
+    assert "Virtual Private Cloud vpc-aaa" in diagram
+    assert "NAT Gateway (Network Address Translation)" in diagram
+    assert "Availability Zone" in diagram or "us-east-1a" in diagram
+    assert "IGW " not in diagram, "raw 'IGW' abbreviation leaked into a label"
+
+
+def test_vpc_topology_legend_inventories_only_the_symbols_used():
+    diagram = discover.vpc_topology_mermaid("us-east-1", FULL_NETWORK)
+    legend = diagram.split("subgraph Legend")[1]
+    assert "Subnet x3" in legend
+    assert "Gateway x3" in legend  # internet gateway + NAT gateway + transit gateway
+    assert "VPC endpoint x2" in legend
+    assert "Virtual Private Cloud (VPC) x2" in legend  # local VPC + the peer
+    assert "Public internet x1" in legend
+    assert "Arrow = one connection." in legend
+
+
+def test_vpc_topology_legend_omits_symbol_kinds_not_on_the_diagram():
+    """A legend entry with no shape behind it is noise."""
+    network = {"Vpcs": [{"VpcId": "vpc-bare", "CidrBlock": "10.0.0.0/16"}], "Subnets": [], "InternetGateways": [], "NatGateways": []}
+    diagram = discover.vpc_topology_mermaid("us-east-1", network)
+    legend = diagram.split("subgraph Legend")[1]
+    assert "Virtual Private Cloud (VPC) x1" in legend
+    for absent in ("Subnet x", "Gateway x", "VPC endpoint x", "Public internet x"):
+        assert absent not in legend, f"legend lists {absent!r} but nothing on the diagram uses it"
+
+
+def test_vpc_topology_no_legend_when_there_is_nothing_to_draw():
+    diagram = discover.vpc_topology_mermaid("us-east-1", {"Vpcs": [], "Subnets": [], "InternetGateways": [], "NatGateways": []})
+    assert "subgraph Legend" not in diagram
+
+
+def test_vpc_topology_draws_the_far_end_of_a_cross_account_peering():
+    diagram = discover.vpc_topology_mermaid("us-east-1", FULL_NETWORK)
+    assert "Peered VPC vpc-zzz" in diagram
+    assert "account 444455556666" in diagram
+    # The peer is not in this region's inventory, so it belongs in the
+    # "Outside this region" box, not inside the region's boundary.
+    external = diagram.split('subgraph External')[1].split("\n  end")[0]
+    assert "vpc_zzz[" in external
+    assert "internet(" in external
+    assert diagram.index("vpc_zzz[") < diagram.index("subgraph Region_us_east_1")
+
+
+def test_vpc_topology_node_ids_are_mermaid_safe():
+    network = {
+        "Vpcs": [{"VpcId": "vpc-a.b", "CidrBlock": "10.0.0.0/16"}],
+        "Subnets": [],
+        "InternetGateways": [],
+        "NatGateways": [],
+    }
+    diagram = discover.vpc_topology_mermaid("ap-southeast-2", network)
+    node_line = [ln for ln in diagram.splitlines() if "Virtual Private Cloud" in ln][0]
+    node_id = node_line.strip().split("[")[0]
+    assert node_id == "vpc_a_b"
+
+
+def test_vpc_topology_label_text_cannot_break_out_of_its_quotes():
+    """AWS lets a tag/name carry a double quote or pipe; either would end
+    the Mermaid label early and produce an unparseable diagram."""
+    network = {
+        "Vpcs": [{"VpcId": 'vpc-1', "CidrBlock": '10.0.0.0/16" | x'}],
+        "Subnets": [],
+        "InternetGateways": [],
+        "NatGateways": [],
+    }
+    diagram = discover.vpc_topology_mermaid("us-east-1", network)
+    label = diagram.split('vpc_1["')[1].split('"]')[0]
+    assert '"' not in label and "|" not in label
+
+
+def test_subnet_route_table_prefers_explicit_association_over_main():
+    main = {"RouteTableId": "rtb-main", "VpcId": "vpc-1", "Associations": [{"Main": True}], "Routes": []}
+    explicit = {
+        "RouteTableId": "rtb-explicit",
+        "VpcId": "vpc-1",
+        "Associations": [{"SubnetId": "subnet-1"}],
+        "Routes": [],
+    }
+    subnet = {"SubnetId": "subnet-1", "VpcId": "vpc-1"}
+    assert discover._subnet_route_table(subnet, [main, explicit])["RouteTableId"] == "rtb-explicit"
+    assert discover._subnet_route_table(subnet, [main])["RouteTableId"] == "rtb-main"
+    assert discover._subnet_route_table(subnet, []) is None
+
+
+def test_subnet_connectivity_reports_the_missing_route_table():
+    """A subnet whose route table we can't find must say so on the diagram
+    rather than silently looking isolated for the wrong reason."""
+    role, target, label = discover._subnet_connectivity({"SubnetId": "subnet-x", "VpcId": "vpc-1"}, [])
+    assert role == "Isolated"
+    assert target == ""
+    assert "no route table" in label
+
+
+def test_subnet_connectivity_treats_an_ipv6_default_route_as_a_default_route():
+    route_tables = [
+        {
+            "RouteTableId": "rtb-v6",
+            "VpcId": "vpc-1",
+            "Associations": [{"SubnetId": "subnet-1"}],
+            "Routes": [{"DestinationIpv6CidrBlock": "::/0", "GatewayId": "igw-1"}],
+        }
+    ]
+    role, target, _ = discover._subnet_connectivity({"SubnetId": "subnet-1", "VpcId": "vpc-1"}, route_tables)
+    assert (role, target) == ("Public", "igw-1")
+
+
+def test_vpc_topology_connects_a_subnet_routed_through_a_transit_gateway():
+    """The Transit Gateway node has to exist before subnets are drawn, or a
+    subnet whose default route points at it silently loses its edge."""
+    network = {
+        "Vpcs": [{"VpcId": "vpc-1", "CidrBlock": "10.0.0.0/16"}],
+        "Subnets": [{"SubnetId": "subnet-1", "VpcId": "vpc-1", "CidrBlock": "10.0.1.0/24", "AvailabilityZone": "us-east-1a"}],
+        "RouteTables": [
+            {
+                "RouteTableId": "rtb-1",
+                "VpcId": "vpc-1",
+                "Associations": [{"SubnetId": "subnet-1"}],
+                "Routes": [{"DestinationCidrBlock": "0.0.0.0/0", "TransitGatewayId": "tgw-7"}],
+            }
+        ],
+        "InternetGateways": [],
+        "NatGateways": [],
+        "TransitGatewayAttachments": [
+            {"TransitGatewayAttachmentId": "tgw-attach-7", "TransitGatewayId": "tgw-7", "ResourceId": "vpc-1"}
+        ],
+    }
+    diagram = discover.vpc_topology_mermaid("us-east-1", network)
+    assert "subnet_1 -->|\"0.0.0.0/0 via rtb-1: private routing only, no internet\"| tgw_7" in diagram
+
+def test_vpc_topology_is_structurally_valid_mermaid():
+    """Cheap stand-in for a Mermaid parser: balanced subgraph/end pairs, no
+    label with an odd number of quotes, and no edge pointing at a node that
+    was never declared."""
+    diagram = discover.vpc_topology_mermaid("us-east-1", FULL_NETWORK)
+    lines = [ln.strip() for ln in diagram.splitlines()]
+    assert lines[0] == "flowchart TB"
+    assert sum(ln.startswith("subgraph ") for ln in lines) == sum(ln == "end" for ln in lines)
+    for line in lines:
+        assert line.count('"') % 2 == 0, f"unbalanced quotes: {line}"
+
+    declared = {
+        re.match(r"([A-Za-z0-9_]+)[\[({]", ln).group(1)
+        for ln in lines
+        if re.match(r"[A-Za-z0-9_]+[\[({]", ln) and "|" not in ln.split("[")[0]
+    }
+    assert declared, "no nodes parsed out of the diagram -- the check is vacuous"
+    for line in lines:
+        if "-->" not in line:
+            continue
+        src, dst = line.split(" ", 1)[0], line.rsplit("| ", 1)[-1]
+        assert src in declared, f"edge source {src} never declared"
+        assert dst in declared, f"edge target {dst} never declared"
+
+
+def test_discover_report_embeds_the_legend_with_the_diagram():
+    """The legend has to travel with the diagram into the rendered report --
+    a diagram pasted elsewhere without it is unreadable."""
+    inventory = {
+        "AccountId": "123456789012",
+        "Regions": {
+            "us-east-1": {
+                "Network": dict(FULL_NETWORK, WideOpenSecurityGroupRules=[]),
+                "Compute": {"Instances": [], "LoadBalancersV2": [], "ClassicLoadBalancers": []},
+                "Containers": {"EcsClusters": [], "EksClusters": []},
+                "DataStores": {"RdsInstances": [], "LambdaFunctions": []},
+            }
+        },
+        "Global": {"DataStores": {"S3Buckets": [], "PubliclyAccessibleBuckets": [], "UnencryptedBuckets": []}},
+    }
+    md = discover.build_report(inventory, discover.resource_counts_by_region(inventory)).render_markdown()
+    assert "```mermaid" in md
+    assert "subgraph Legend" in md
 
 # ------------------------------------------------------------- aws-cost-optimization
 def test_cost_date_ranges_are_utc_not_local():
