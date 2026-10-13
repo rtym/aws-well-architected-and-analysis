@@ -1,4 +1,9 @@
+import importlib.util
+import sys
+from pathlib import Path
+
 import boto3
+import pytest
 from moto import mock_aws
 
 from shared.awslib.collectors import cost
@@ -245,3 +250,137 @@ def test_collect_cost_report_wires_every_field(ctx, monkeypatch):
     assert report["TrustedAdvisorCostChecks"] == ["ta-check"]
     assert report["Budgets"] == ["budget"]
     assert report["TimePeriod"] == {"Start": "2024-01-01", "End": "2024-02-01"}
+
+
+# ------------------------------------------------ DataUnavailableException
+# Cost Explorer returns DataUnavailableException when there is simply no data
+# (no Savings Plans / reservations, or a brand-new account). That is "no
+# evidence", not a failure, and used to abort entire collection runs.
+
+ROOT = Path(__file__).resolve().parents[1]
+
+CE_OPTIONAL_COLLECTORS = [
+    ("get_cost_forecast", lambda ctx: cost.cost_forecast(ctx, "2024-01-01", "2024-02-01"), {}),
+    ("get_reservation_utilization", lambda ctx: cost.reservation_utilization(ctx, "2024-01-01", "2024-02-01"), {}),
+    ("get_reservation_coverage", lambda ctx: cost.reservation_coverage(ctx, "2024-01-01", "2024-02-01"), {}),
+    ("get_savings_plans_utilization", lambda ctx: cost.savings_plans_utilization(ctx, "2024-01-01", "2024-02-01"), {}),
+    ("get_savings_plans_coverage", lambda ctx: cost.savings_plans_coverage(ctx, "2024-01-01", "2024-02-01"), {}),
+    ("get_rightsizing_recommendation", lambda ctx: cost.rightsizing_recommendations(ctx), []),
+    ("get_savings_plans_purchase_recommendation", lambda ctx: cost.savings_plans_purchase_recommendation(ctx), {}),
+    ("get_reservation_purchase_recommendation", lambda ctx: cost.reserved_instance_purchase_recommendation(ctx), {}),
+    ("get_anomalies", lambda ctx: cost.anomalies(ctx, "2024-01-01", "2024-02-01"), []),
+]
+
+
+def test_savings_plans_utilization_returns_dict_default_on_data_unavailable(ctx):
+    ce_client, stub = install_stub(ctx, "ce", region="us-east-1")
+    stub.add_client_error("get_savings_plans_utilization", service_error_code="DataUnavailableException")
+
+    assert cost.savings_plans_utilization(ctx, "2024-01-01", "2024-02-01") == {}
+
+
+@pytest.mark.parametrize(
+    "operation,call,default",
+    CE_OPTIONAL_COLLECTORS,
+    ids=[op for op, _, _ in CE_OPTIONAL_COLLECTORS],
+)
+def test_every_optional_ce_collector_returns_default_on_data_unavailable(ctx, operation, call, default):
+    ce_client, stub = install_stub(ctx, "ce", region="us-east-1")
+    stub.add_client_error(operation, service_error_code="DataUnavailableException")
+
+    assert call(ctx) == default
+    stub.assert_no_pending_responses()
+
+
+def _stub_ce_with_no_commitment_data(ctx):
+    """A CE client for an account with spend but no Savings Plans,
+    reservations or other optional data: cost & usage succeeds, every
+    optional endpoint raises DataUnavailableException. Responses are queued
+    in the order collect_cost_report() calls them."""
+    ce_client, stub = install_stub(ctx, "ce", region="us-east-1")
+    stub.add_response("get_cost_and_usage", {"ResultsByTime": []})
+    stub.add_response("get_cost_and_usage", {"ResultsByTime": []})
+    for operation in (
+        "get_cost_forecast",
+        "get_reservation_utilization",
+        "get_reservation_coverage",
+        "get_savings_plans_utilization",
+        "get_savings_plans_coverage",
+        "get_rightsizing_recommendation",
+        "get_savings_plans_purchase_recommendation",
+        "get_reservation_purchase_recommendation",
+        "get_anomalies",
+    ):
+        stub.add_client_error(operation, service_error_code="DataUnavailableException")
+    return stub
+
+
+def _no_trusted_advisor_or_budgets(monkeypatch):
+    monkeypatch.setattr(cost, "trusted_advisor_cost_checks", lambda *a, **k: [])
+    monkeypatch.setattr(cost, "budgets", lambda *a, **k: [])
+
+
+def test_collect_cost_report_tolerates_data_unavailable(ctx, monkeypatch):
+    stub = _stub_ce_with_no_commitment_data(ctx)
+    _no_trusted_advisor_or_budgets(monkeypatch)
+
+    report = cost.collect_cost_report(ctx, "2024-01-01", "2024-02-01")
+
+    stub.assert_no_pending_responses()
+    assert report["SavingsPlansUtilization"] == {}
+    assert report["SavingsPlansCoverage"] == {}
+    assert report["ReservationUtilization"] == {}
+    assert report["ReservationCoverage"] == {}
+    assert report["Forecast"] == {}
+    assert report["RightsizingRecommendations"] == []
+    assert report["Anomalies"] == []
+
+
+def _load_script(module_name: str, script_path: str):
+    spec = importlib.util.spec_from_file_location(module_name, ROOT / script_path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_analyze_cost_does_not_crash_on_data_unavailable(ctx, monkeypatch):
+    analyze_cost = _load_script("ce_unavailable_analyze_cost", "skills/aws-cost-optimization/scripts/analyze_cost.py")
+    stub = _stub_ce_with_no_commitment_data(ctx)
+    _no_trusted_advisor_or_budgets(monkeypatch)
+
+    data = analyze_cost.collect(ctx, "2024-01-01", "2024-02-01", co_regions=[])
+    report = analyze_cost.build_report(data, "2024-01-01", "2024-02-01")
+
+    stub.assert_no_pending_responses()
+    assert data["CostReport"]["SavingsPlansUtilization"] == {}
+    assert report is not None
+
+
+def test_collect_evidence_does_not_crash_on_data_unavailable(ctx, monkeypatch):
+    collect_evidence = _load_script(
+        "ce_unavailable_collect_evidence", "skills/aws-well-architected-review/scripts/collect_evidence.py"
+    )
+    stub = _stub_ce_with_no_commitment_data(ctx)
+    _no_trusted_advisor_or_budgets(monkeypatch)
+    # Only Cost Explorer is under test; every other collector is irrelevant here.
+    for module, name in [
+        (collect_evidence.vpc, "collect_region_network"),
+        (collect_evidence.compute, "collect_region_compute"),
+        (collect_evidence.containers, "collect_region_containers"),
+        (collect_evidence.data_stores, "collect_region_data_stores"),
+        (collect_evidence.security, "collect_region_security"),
+        (collect_evidence.backup, "collect_region_backup"),
+        (collect_evidence.observability, "collect_region_observability"),
+        (collect_evidence.quotas, "common_quota_values"),
+        (collect_evidence.security, "collect_global_security"),
+        (collect_evidence.data_stores, "collect_global_data_stores"),
+        (collect_evidence.cloudtrail, "cloudtrail_posture"),
+    ]:
+        monkeypatch.setattr(module, name, lambda *a, **k: {})
+
+    evidence = collect_evidence.collect(ctx, ["us-east-1"], workload_id=None)
+
+    stub.assert_no_pending_responses()
+    assert evidence["Global"]["Cost"]["SavingsPlansUtilization"] == {}
+    assert evidence["Global"]["Cost"]["ReservationUtilization"] == {}
