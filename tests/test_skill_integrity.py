@@ -10,6 +10,7 @@ skill, follows the instructions, and hits a missing file mid-task.
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 
@@ -94,6 +95,24 @@ def test_skill_scripts_are_executable_python(skill_md):
         source = script.read_text()
         assert "def main(" in source, f"{script} has no main() entry point"
         assert "__main__" in source, f"{script} is not runnable as a script"
+
+
+@pytest.mark.parametrize("skill_md", SKILL_FILES, ids=lambda p: p.parent.name)
+def test_scripts_run_through_the_venv_launcher(skill_md):
+    """A bare `python script.py` fails on a marketplace install: `python`
+    may not exist (stock macOS) and nothing has installed requirements.txt.
+    Every invocation must go through bin/run-skill-script instead."""
+    text = skill_md.read_text()
+    bare = re.findall(r"^\s*python3?\s+\S+\.py", text, flags=re.MULTILINE)
+    assert not bare, f"{skill_md} invokes a script without the launcher: {bare}"
+    for line in re.findall(r"^.*/scripts/\w+\.py.*$", text, flags=re.MULTILINE):
+        if line.lstrip().startswith("${CLAUDE_PLUGIN_ROOT}/"):
+            assert line.lstrip().startswith("${CLAUDE_PLUGIN_ROOT}/bin/run-skill-script "), line
+
+
+def test_venv_launcher_is_executable():
+    launcher = ROOT / "bin" / "run-skill-script"
+    assert launcher.is_file() and os.access(launcher, os.X_OK)
 
 
 def test_plugin_manifest_is_valid_json_with_required_fields():

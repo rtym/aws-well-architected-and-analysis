@@ -52,7 +52,7 @@ against existing log data; it does not modify anything. See
 ### Step 1 -- Run the collector
 
 ```bash
-python ${CLAUDE_PLUGIN_ROOT}/skills/aws-network-traffic-analysis/scripts/traffic_analysis.py \
+${CLAUDE_PLUGIN_ROOT}/bin/run-skill-script ${CLAUDE_PLUGIN_ROOT}/skills/aws-network-traffic-analysis/scripts/traffic_analysis.py \
   --profile <profile> \
   --region us-east-1 \
   --log-group /vpc/flow-logs/vpc-0123abcd \
@@ -61,6 +61,14 @@ python ${CLAUDE_PLUGIN_ROOT}/skills/aws-network-traffic-analysis/scripts/traffic
   --output-dir reports/output \
   --formats md,html,pdf
 ```
+
+`run-skill-script` runs the script in the plugin's own Python virtualenv. On
+first use it creates that virtualenv and installs `requirements.txt` (about a
+minute; progress goes to stderr). If it exits saying Python 3.11+ is missing,
+relay its install hint to the user rather than retrying. If only PDF export
+fails (WeasyPrint needs Pango: `brew install pango` on macOS), the Markdown
+and HTML reports are already written -- rerun with `--formats md,html` or
+tell the user how to enable PDF.
 
 This produces: top talkers by bytes, protocol mix, rejected-traffic table,
 a port-scan heuristic (sources touching an unusually high number of

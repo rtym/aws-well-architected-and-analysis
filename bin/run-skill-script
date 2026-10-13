@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Run a skill script inside the plugin's own Python virtualenv, creating or
+# refreshing that virtualenv first when needed.
+#
+#   run-skill-script <path/to/script.py> [script args...]
+#
+# The virtualenv lives outside the plugin directory, so it survives plugin
+# updates: in $CLAUDE_PLUGIN_DATA when Claude Code provides it, otherwise in
+# ~/.cache/aws-well-architected-and-analysis. It is rebuilt whenever
+# requirements.txt changes. Override the location with AWS_WAA_VENV.
+set -euo pipefail
+
+PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REQUIREMENTS="$PLUGIN_ROOT/requirements.txt"
+DATA_DIR="${CLAUDE_PLUGIN_DATA:-${XDG_CACHE_HOME:-$HOME/.cache}/aws-well-architected-and-analysis}"
+VENV="${AWS_WAA_VENV:-$DATA_DIR/venv}"
+STAMP="$VENV/.requirements.sha256"
+
+if [ $# -lt 1 ]; then
+  echo "usage: $(basename "$0") <script.py> [args...]" >&2
+  exit 2
+fi
+
+log() { echo "[aws-well-architected-and-analysis] $*" >&2; }
+
+find_python() {
+  local candidate
+  for candidate in python3.13 python3.12 python3.11 python3; do
+    if command -v "$candidate" >/dev/null 2>&1 \
+      && "$candidate" -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>/dev/null; then
+      command -v "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+requirements_hash() {
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$REQUIREMENTS" | cut -d' ' -f1
+  else
+    sha256sum "$REQUIREMENTS" | cut -d' ' -f1
+  fi
+}
+
+wanted="$(requirements_hash)"
+if [ ! -x "$VENV/bin/python" ] || [ "$(cat "$STAMP" 2>/dev/null)" != "$wanted" ]; then
+  if ! python="$(find_python)"; then
+    log "Python 3.11 or newer is required but was not found on PATH."
+    log "Install it (macOS: 'brew install python@3.12'; Debian/Ubuntu: 'sudo apt-get install python3.12-venv') and retry."
+    exit 3
+  fi
+  log "Setting up Python environment in $VENV (first run or updated requirements; takes a minute)..."
+  rm -rf "$VENV"
+  mkdir -p "$(dirname "$VENV")"
+  "$python" -m venv "$VENV"
+  "$VENV/bin/python" -m pip install --quiet --disable-pip-version-check --upgrade pip >&2
+  "$VENV/bin/python" -m pip install --quiet --disable-pip-version-check -r "$REQUIREMENTS" >&2
+  echo "$wanted" > "$STAMP"
+  log "Python environment ready."
+fi
+
+exec "$VENV/bin/python" "$@"

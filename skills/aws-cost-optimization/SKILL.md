@@ -43,7 +43,7 @@ under the hood -- the script handles that automatically).
 ### Step 1 -- Run the collector
 
 ```bash
-python ${CLAUDE_PLUGIN_ROOT}/skills/aws-cost-optimization/scripts/analyze_cost.py \
+${CLAUDE_PLUGIN_ROOT}/bin/run-skill-script ${CLAUDE_PLUGIN_ROOT}/skills/aws-cost-optimization/scripts/analyze_cost.py \
   --profile <profile> \
   --lookback-days 90 \
   --compute-optimizer-regions us-east-1,eu-west-1 \
@@ -51,6 +51,14 @@ python ${CLAUDE_PLUGIN_ROOT}/skills/aws-cost-optimization/scripts/analyze_cost.p
   --output-dir reports/output \
   --formats md,html,pdf
 ```
+
+`run-skill-script` runs the script in the plugin's own Python virtualenv. On
+first use it creates that virtualenv and installs `requirements.txt` (about a
+minute; progress goes to stderr). If it exits saying Python 3.11+ is missing,
+relay its install hint to the user rather than retrying. If only PDF export
+fails (WeasyPrint needs Pango: `brew install pango` on macOS), the Markdown
+and HTML reports are already written -- rerun with `--formats md,html` or
+tell the user how to enable PDF.
 
 This produces a report with: monthly cost trend by top service, cost
 distribution pie chart, RI/Savings Plans utilization, Cost Explorer

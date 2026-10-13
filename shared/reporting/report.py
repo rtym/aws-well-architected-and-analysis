@@ -93,6 +93,13 @@ class Report:
             raise RuntimeError(
                 "weasyprint is required for PDF export: pip install -r requirements.txt"
             ) from exc
+        except OSError as exc:  # pragma: no cover - exercised only when system libs missing
+            # WeasyPrint imports fine from pip but loads Pango at import time.
+            raise RuntimeError(
+                "PDF export needs the Pango system library (macOS: brew install pango; "
+                "Debian/Ubuntu: see README). Markdown/HTML reports are unaffected -- "
+                "rerun with --formats md,html to skip PDF."
+            ) from exc
         return HTML(string=self.render_html()).write_pdf()
 
     # --------------------------------------------------------------- Save

@@ -56,7 +56,7 @@ directly rather than guessed at.
 ### Step 1 -- Collect evidence
 
 ```bash
-python ${CLAUDE_PLUGIN_ROOT}/skills/aws-well-architected-review/scripts/collect_evidence.py \
+${CLAUDE_PLUGIN_ROOT}/bin/run-skill-script ${CLAUDE_PLUGIN_ROOT}/skills/aws-well-architected-review/scripts/collect_evidence.py \
   --profile <profile> \
   --pillar all \
   --regions us-east-1 \
@@ -64,6 +64,14 @@ python ${CLAUDE_PLUGIN_ROOT}/skills/aws-well-architected-review/scripts/collect_
   --output-dir reports/output \
   --formats md,html,pdf
 ```
+
+`run-skill-script` runs the script in the plugin's own Python virtualenv. On
+first use it creates that virtualenv and installs `requirements.txt` (about a
+minute; progress goes to stderr). If it exits saying Python 3.11+ is missing,
+relay its install hint to the user rather than retrying. If only PDF export
+fails (WeasyPrint needs Pango: `brew install pango` on macOS), the Markdown
+and HTML reports are already written -- rerun with `--formats md,html` or
+tell the user how to enable PDF.
 
 Use `--pillar security` (etc.) to scope to one pillar; use `--workload-id`
 if the user has an existing WA Tool workload and wants improvement items

@@ -111,12 +111,18 @@ skills to be picked up.
 ### Python environment
 
 The skill scripts need Python 3.11+ and the packages in `requirements.txt`
-(`boto3`, `matplotlib`, `markdown`, `weasyprint`). Set up a virtualenv once:
+(`boto3`, `matplotlib`, `markdown`, `weasyprint`). You don't install these by
+hand: every skill runs its script through `bin/run-skill-script`, which on
+first use creates a private virtualenv and installs `requirements.txt` into it.
+That takes about a minute; later runs reuse it, and it is rebuilt automatically
+when `requirements.txt` changes. The virtualenv lives outside the plugin
+directory so plugin updates don't discard it -- in `$CLAUDE_PLUGIN_DATA` when
+Claude Code provides it, otherwise `~/.cache/aws-well-architected-and-analysis/`
+(set `AWS_WAA_VENV` to choose another path).
 
-```bash
-python3 -m venv .venv
-./.venv/bin/pip install -r requirements.txt
-```
+The only prerequisite is a Python 3.11+ interpreter on `PATH`
+(`python3.13`, `python3.12`, `python3.11` or `python3`). macOS's built-in
+`/usr/bin/python3` is 3.9 and isn't enough -- `brew install python@3.12`.
 
 WeasyPrint (used for PDF export) needs a few system libraries beyond pip
 (Pango/Cairo plus HarfBuzz's subsetting library). On Debian/Ubuntu -- the

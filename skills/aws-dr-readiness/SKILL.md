@@ -45,13 +45,21 @@ Read-only. See `${CLAUDE_PLUGIN_ROOT}/PERMISSIONS.md` for the IAM policy.
 ### Step 1 -- Run the collector
 
 ```bash
-python ${CLAUDE_PLUGIN_ROOT}/skills/aws-dr-readiness/scripts/dr_readiness.py \
+${CLAUDE_PLUGIN_ROOT}/bin/run-skill-script ${CLAUDE_PLUGIN_ROOT}/skills/aws-dr-readiness/scripts/dr_readiness.py \
   --profile <profile> \
   --regions us-east-1,eu-west-1 \
   --json-out reports/output/dr-evidence.json \
   --output-dir reports/output \
   --formats md,html,pdf
 ```
+
+`run-skill-script` runs the script in the plugin's own Python virtualenv. On
+first use it creates that virtualenv and installs `requirements.txt` (about a
+minute; progress goes to stderr). If it exits saying Python 3.11+ is missing,
+relay its install hint to the user rather than retrying. If only PDF export
+fails (WeasyPrint needs Pango: `brew install pango` on macOS), the Markdown
+and HTML reports are already written -- rerun with `--formats md,html` or
+tell the user how to enable PDF.
 
 This produces: AWS Backup plan/vault/cross-region-copy coverage, an RDS
 DR-signal chart (single-AZ vs. read-replicas vs. cross-region/global

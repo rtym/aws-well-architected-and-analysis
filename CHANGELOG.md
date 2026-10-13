@@ -2,6 +2,26 @@
 
 Notable changes to this plugin. Versions track `.claude-plugin/plugin.json`.
 
+## [1.1.2]
+
+### Fixed
+
+- **Skills failed on a fresh marketplace install.** Every SKILL.md ran a bare
+  `python script.py`, which fails where only `python3` exists (stock macOS)
+  and fails with `No module named 'boto3'` because nothing had installed
+  `requirements.txt`. Skills now run their scripts through the new
+  `bin/run-skill-script`, which finds a Python 3.11+ interpreter, creates a
+  private virtualenv on first use (rebuilt when `requirements.txt` changes),
+  and gives an install hint when no suitable Python is found.
+- Missing Pango (needed by WeasyPrint for PDF export) now raises a clear
+  error naming the fix and the `--formats md,html` fallback, instead of a raw
+  `OSError` traceback.
+
+### Added
+
+- Tests that every SKILL.md script invocation goes through the launcher and
+  that the launcher is executable.
+
 ## [1.1.1]
 
 ### Fixed

@@ -45,13 +45,21 @@ view ${CLAUDE_PLUGIN_ROOT}/skills/aws-organizations-posture/references/organizat
 ### Step 1 -- Run the collector
 
 ```bash
-python ${CLAUDE_PLUGIN_ROOT}/skills/aws-organizations-posture/scripts/analyze_organization.py \
+${CLAUDE_PLUGIN_ROOT}/bin/run-skill-script ${CLAUDE_PLUGIN_ROOT}/skills/aws-organizations-posture/scripts/analyze_organization.py \
   --profile <profile> \
   --region us-east-1 \
   --json-out reports/output/organizations-evidence.json \
   --output-dir reports/output \
   --formats md,html,pdf
 ```
+
+`run-skill-script` runs the script in the plugin's own Python virtualenv. On
+first use it creates that virtualenv and installs `requirements.txt` (about a
+minute; progress goes to stderr). If it exits saying Python 3.11+ is missing,
+relay its install hint to the user rather than retrying. If only PDF export
+fails (WeasyPrint needs Pango: `brew install pango` on macOS), the Markdown
+and HTML reports are already written -- rerun with `--formats md,html` or
+tell the user how to enable PDF.
 
 `--region` here only picks which region to call the (regional)
 GuardDuty/Security Hub `ListOrganizationAdminAccounts` APIs from --
