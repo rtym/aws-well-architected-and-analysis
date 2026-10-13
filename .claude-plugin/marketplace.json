@@ -1,0 +1,28 @@
+{
+  "name": "aws-well-architected-and-analysis",
+  "owner": {
+    "name": "Roman Tymoshuk",
+    "email": "roman@tymoshuk.net"
+  },
+  "metadata": {
+    "description": "Marketplace hosting the AWS read-only analysis plugin.",
+    "version": "1.1.0"
+  },
+  "plugins": [
+    {
+      "name": "aws-well-architected-and-analysis",
+      "source": "./",
+      "description": "AWS account analysis toolkit: Well-Architected reviews, cost optimization, security posture, architecture discovery & gap analysis, VPC network traffic analysis, Lucid diagrams, Organizations posture, and DR readiness, with Markdown/HTML/PDF reporting.",
+      "version": "1.1.0",
+      "license": "MIT",
+      "author": {
+        "name": "Roman Tymoshuk",
+        "email": "roman@tymoshuk.net"
+      },
+      "homepage": "https://github.com/rtym/aws-well-architected-and-analysis#readme",
+      "repository": "https://github.com/rtym/aws-well-architected-and-analysis",
+      "category": "cloud",
+      "keywords": ["aws", "well-architected", "cost", "security", "governance", "finops"]
+    }
+  ]
+}

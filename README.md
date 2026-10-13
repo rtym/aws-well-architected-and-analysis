@@ -77,12 +77,21 @@ Security Hub, Access Analyzer, Config, Well-Architected Tool -- services
 ## Installing the plugin
 
 This is a standard Claude Code plugin directory (a `.claude-plugin/plugin.json`
-manifest with `skills/` auto-discovered underneath). To install it locally:
+manifest with `skills/` auto-discovered underneath), and the repo doubles as
+its own marketplace via `.claude-plugin/marketplace.json`. To install it from
+GitHub:
 
 ```bash
-# from inside Claude Code, pointed at this repo:
+# from inside Claude Code:
+/plugin marketplace add rtym/aws-well-architected-and-analysis
+/plugin install aws-well-architected-and-analysis@aws-well-architected-and-analysis
+```
+
+Or from a local clone:
+
+```bash
 /plugin marketplace add /path/to/aws-well-architected-and-analysis
-/plugin install aws-well-architected-and-analysis
+/plugin install aws-well-architected-and-analysis@aws-well-architected-and-analysis
 ```
 
 Or, if you maintain a marketplace manifest for your org (see
