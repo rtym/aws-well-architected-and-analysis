@@ -94,13 +94,13 @@ Or from a local clone:
 /plugin install aws-well-architected-and-analysis@aws-well-architected-and-analysis
 ```
 
-Or, if you maintain a marketplace manifest for your org (see
-`ieu-ai-kit`'s `marketplace.json` for the pattern), add an entry:
+To list it in another marketplace (for example your org's own), add an entry
+that points at this repo:
 
 ```json
 {
   "name": "aws-well-architected-and-analysis",
-  "source": "./plugins/aws-well-architected-and-analysis",
+  "source": { "source": "github", "repo": "rtym/aws-well-architected-and-analysis" },
   "description": "AWS account analysis: Well-Architected reviews, cost, security, architecture discovery/gap analysis, network traffic, Organizations posture, DR readiness, and Lucid diagrams."
 }
 ```

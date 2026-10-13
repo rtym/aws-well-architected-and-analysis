@@ -2,6 +2,18 @@
 
 Notable changes to this plugin. Versions track `.claude-plugin/plugin.json`.
 
+## [1.1.1]
+
+### Fixed
+
+- **Installing from GitHub failed** with "Marketplace file not found":
+  `.claude-plugin/marketplace.json` had never been committed. It is now part
+  of the repo, and its plugin entry is named `aws-well-architected-and-analysis`
+  to match `plugin.json`.
+- README install instructions now cover adding the repo as a marketplace from
+  GitHub, and the example entry for listing the plugin in another marketplace
+  uses a valid GitHub source instead of a stale local path.
+
 ## [1.1.0]
 
 ### Added
