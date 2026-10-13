@@ -54,6 +54,11 @@ def ignore_access_denied(default=None):
     missing permission or unavailable service (e.g. GuardDuty not enabled) doesn't
     abort an entire collection run. Returns `default` and records the error on
     the result via the caller's own error-collection convention instead.
+
+    Also swallows Cost Explorer's DataUnavailableException, which it returns
+    when there is simply nothing to report (no Savings Plans or reservations,
+    or an account too new to have Cost Explorer data) -- that is "no evidence",
+    not a failure.
     """
 
     def decorator(fn):
@@ -72,6 +77,7 @@ def ignore_access_denied(default=None):
                     "InvalidAction",
                     "InvalidAccessException",
                     "AWSOrganizationsNotInUseException",
+                    "DataUnavailableException",
                 }:
                     return default() if callable(default) else default
                 raise

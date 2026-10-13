@@ -39,6 +39,7 @@ def test_client_is_cached_per_service_and_region(ctx):
         "InvalidAction",
         "InvalidAccessException",
         "AWSOrganizationsNotInUseException",
+        "DataUnavailableException",
     ],
 )
 def test_ignore_access_denied_swallows_every_documented_error_code(ctx, error_code):

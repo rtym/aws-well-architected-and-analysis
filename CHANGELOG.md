@@ -2,6 +2,24 @@
 
 Notable changes to this plugin. Versions track `.claude-plugin/plugin.json`.
 
+## [Unreleased]
+
+### Fixed
+
+- **Evidence collection and cost analysis crashed in accounts with no Savings
+  Plans.** Cost Explorer answers `GetSavingsPlansUtilization` (and its other
+  utilization, coverage, recommendation and forecast endpoints) with
+  `DataUnavailableException` when there is simply no data -- no Savings Plans
+  or reservations, or a brand-new account. `ignore_access_denied` did not
+  recognise that code, so it aborted `collect_evidence.py` and
+  `analyze_cost.py`. It is now treated as "no evidence" and the collector
+  returns its empty default; other errors still propagate.
+
+### Added
+
+- Tests that every optional Cost Explorer collector, `collect_cost_report`,
+  and both scripts' `collect()` survive `DataUnavailableException`.
+
 ## [1.1.2]
 
 ### Fixed
