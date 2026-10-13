@@ -1,9 +1,11 @@
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
 import boto3
 import pytest
+from botocore.exceptions import ClientError
 from moto import mock_aws
 
 from shared.awslib.collectors import cost
@@ -292,6 +294,37 @@ def test_every_optional_ce_collector_returns_default_on_data_unavailable(ctx, op
     stub.assert_no_pending_responses()
 
 
+def test_optional_ce_collector_list_covers_every_ce_call_in_cost_module():
+    """Guard against drift: a Cost Explorer call added to cost.py must be
+    added to CE_OPTIONAL_COLLECTORS (or deliberately excluded here) so its
+    DataUnavailableException handling is tested."""
+    source = Path(cost.__file__).read_text()
+    called = set(re.findall(r"\bce\.(get_\w+)\(", source))
+    core = {"get_cost_and_usage"}  # undecorated on purpose -- see below
+    assert called - core == {op for op, _, _ in CE_OPTIONAL_COLLECTORS}
+
+
+def test_savings_plans_utilization_still_raises_unrelated_errors(ctx):
+    """The fix must stay narrow: throttling is not "no data"."""
+    ce_client, stub = install_stub(ctx, "ce", region="us-east-1")
+    stub.add_client_error("get_savings_plans_utilization", service_error_code="ThrottlingException")
+
+    with pytest.raises(ClientError) as exc:
+        cost.savings_plans_utilization(ctx, "2024-01-01", "2024-02-01")
+    assert exc.value.response["Error"]["Code"] == "ThrottlingException"
+
+
+def test_cost_and_usage_by_service_still_raises_data_unavailable(ctx):
+    """Core spend data is deliberately not wrapped in ignore_access_denied:
+    if it can't be fetched, the report would be meaningless, so fail loudly."""
+    ce_client, stub = install_stub(ctx, "ce", region="us-east-1")
+    stub.add_client_error("get_cost_and_usage", service_error_code="DataUnavailableException")
+
+    with pytest.raises(ClientError) as exc:
+        cost.cost_and_usage_by_service(ctx, "2024-01-01", "2024-02-01")
+    assert exc.value.response["Error"]["Code"] == "DataUnavailableException"
+
+
 def _stub_ce_with_no_commitment_data(ctx):
     """A CE client for an account with spend but no Savings Plans,
     reservations or other optional data: cost & usage succeeds, every
@@ -354,7 +387,8 @@ def test_analyze_cost_does_not_crash_on_data_unavailable(ctx, monkeypatch):
 
     stub.assert_no_pending_responses()
     assert data["CostReport"]["SavingsPlansUtilization"] == {}
-    assert report is not None
+    coverage = next(s for s in report.sections if s.title == "Reservation & Savings Plans Coverage")
+    assert "No Reserved Instance or Savings Plans utilization data returned" in coverage.body_md
 
 
 def test_collect_evidence_does_not_crash_on_data_unavailable(ctx, monkeypatch):
