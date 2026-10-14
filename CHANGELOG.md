@@ -2,7 +2,7 @@
 
 Notable changes to this plugin. Versions track `.claude-plugin/plugin.json`.
 
-## [Unreleased]
+## [1.1.3]
 
 ### Fixed
 
