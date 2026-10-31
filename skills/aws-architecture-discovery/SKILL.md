@@ -39,7 +39,11 @@ conventions any diagram you hand-author has to follow:
 ```
 view ${CLAUDE_PLUGIN_ROOT}/skills/aws-architecture-discovery/references/viewpoints.md
 view ${CLAUDE_PLUGIN_ROOT}/skills/aws-lucid-diagrams/references/diagram-conventions.md
+view ${CLAUDE_PLUGIN_ROOT}/skills/aws-architecture-gap-analysis/references/writing-style.md
 ```
+
+(The third is the plugin-wide writing style for anything you write around
+the generated report -- the Step 4 summary especially.)
 
 Confirm with the user (if not already stated):
 
@@ -71,12 +75,10 @@ fails (WeasyPrint needs Pango: `brew install pango` on macOS), the Markdown
 and HTML reports are already written -- rerun with `--formats md,html` or
 tell the user how to enable PDF.
 
-Use `--all-regions` instead of `--regions` for a full account sweep. This
-can take a while and rack up Cost Explorer / Compute Optimizer style
-API costs are irrelevant here (this script doesn't call those), but a
-full-account EC2/ECS/EKS/RDS sweep across every region is still many API
-calls -- warn the user if they didn't ask for `--all-regions` explicitly
-and the account looks large.
+Use `--all-regions` instead of `--regions` for a full account sweep. A
+full-account EC2/ECS/EKS/RDS sweep across every enabled region is many API
+calls and can take a while -- warn the user if they didn't ask for
+`--all-regions` explicitly and the account looks large.
 
 ### Step 2 -- Read the raw JSON, not just the rendered report
 

@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+"""Lint every generated Markdown report under a directory (or one file).
+
+Usage:
+    bin/lint-report-prose reports/output
+    bin/lint-report-prose reports/output/security-review.md --no-require-intro
+
+Walks the given paths in one sorted-order pass, lints each .md file with
+shared.reporting.prose_lint (banned machine-voice filler, unfilled template
+placeholders, duplicated lines, duplicate headings, missing orientation
+paragraph), prints every finding, and exits non-zero if any file failed.
+
+This checks *generated artifacts*, not the plugin's own skills/references
+-- those are linted by tests/test_prose_quality.py with its own exemptions.
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+PLUGIN_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PLUGIN_ROOT))
+
+from shared.reporting.prose_lint import lint_markdown  # noqa: E402
+
+
+def iter_markdown_files(paths: list[str]):
+    for raw in paths:
+        path = Path(raw)
+        if path.is_dir():
+            yield from sorted(path.rglob("*.md"))
+        elif path.suffix == ".md":
+            yield path
+        else:
+            raise SystemExit(f"not a Markdown file or directory: {path}")
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("paths", nargs="+", help="Report .md files or directories containing them")
+    parser.add_argument(
+        "--no-require-intro",
+        action="store_true",
+        help="Skip the orientation-paragraph check (for fragments that are not full reports)",
+    )
+    args = parser.parse_args(argv)
+
+    files = list(iter_markdown_files(args.paths))
+    if not files:
+        print("No .md files found -- nothing to lint.", file=sys.stderr)
+        return 1
+
+    failed = 0
+    for path in files:
+        findings = lint_markdown(path.read_text(), require_intro=not args.no_require_intro)
+        if findings:
+            failed += 1
+            print(f"FAIL {path}")
+            for finding in findings:
+                print(f"  {finding}")
+        else:
+            print(f"ok   {path}")
+
+    if failed:
+        print(f"\n{failed} of {len(files)} file(s) failed the prose lint.", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

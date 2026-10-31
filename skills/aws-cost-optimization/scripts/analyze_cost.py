@@ -85,6 +85,15 @@ def build_report(data: dict, start: str, end: str) -> Report:
         title="AWS Cost Optimization Report",
         subtitle=f"Cost & usage window: {start} to {end}",
         meta={},
+        intro=(
+            f"This report covers this account's spend from {start} to {end}: "
+            "the cost trend by service, Reserved Instance and Savings Plans "
+            "posture, rightsizing recommendations, and idle resources that "
+            "cost money without doing work. Start with the Cost Trend chart "
+            "for the overall shape, then the Idle / Waste Candidates and "
+            "Rightsizing sections for the items with a concrete saving "
+            "attached."
+        ),
     )
 
     cr = data["CostReport"]
@@ -101,14 +110,28 @@ def build_report(data: dict, start: str, end: str) -> Report:
     sp_util = cr.get("SavingsPlansUtilization") or {}
     coverage_lines = []
     if ri_util.get("Total"):
+        # GetReservationUtilization Total: UtilizationPercentage and
+        # UnusedHours are strings; UnusedHours is a count of hours, not a
+        # dollar amount -- the dollar figure is NetRISavings.
         t = ri_util["Total"]
-        coverage_lines.append(
-            f"- **RI utilization:** {t.get('UtilizationPercentage', 'n/a')}% "
-            f"(unused hours cost ~${t.get('UnusedHours', 'n/a')})"
-        )
+        line = f"- **Reserved Instance utilization:** {t.get('UtilizationPercentage', 'n/a')}%"
+        if t.get("UnusedHours"):
+            line += f", {t['UnusedHours']} purchased hours unused"
+        if t.get("NetRISavings"):
+            line += f", net savings ${t['NetRISavings']} over the window"
+        coverage_lines.append(line)
     if sp_util.get("Total"):
-        t = sp_util["Total"]["SavingsPlansUtilization"] if "SavingsPlansUtilization" in sp_util.get("Total", {}) else sp_util["Total"]
-        coverage_lines.append(f"- **Savings Plans utilization:** {t}")
+        # GetSavingsPlansUtilization Total nests the numbers one level
+        # down: Total.Utilization.{UtilizationPercentage, UnusedCommitment}
+        # and Total.Savings.NetSavings.
+        util = sp_util["Total"].get("Utilization", {})
+        savings = sp_util["Total"].get("Savings", {})
+        line = f"- **Savings Plans utilization:** {util.get('UtilizationPercentage', 'n/a')}%"
+        if util.get("UnusedCommitment"):
+            line += f", ${util['UnusedCommitment']} committed but unused"
+        if savings.get("NetSavings"):
+            line += f", net savings ${savings['NetSavings']} over the window"
+        coverage_lines.append(line)
     if not coverage_lines:
         coverage_lines.append("- No Reserved Instance or Savings Plans utilization data returned (none purchased, or Cost Explorer access not granted).")
     report.add_section("Reservation & Savings Plans Coverage", "\n".join(coverage_lines))

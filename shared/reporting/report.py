@@ -50,6 +50,11 @@ class Report:
     generated_at: str | None = None
     meta: dict = field(default_factory=dict)
     sections: list[Section] = field(default_factory=list)
+    # One to three plain sentences rendered before the first section: what
+    # this report is, what it covers, and where to start reading. Markdown
+    # by the same contract as section bodies (NOT escaped) -- escape any
+    # AWS-sourced string you interpolate with escape_text().
+    intro: str | None = None
 
     def add_section(self, title: str, body_md: str, level: int = 2) -> None:
         self.sections.append(Section(title=title, body_md=body_md, level=level))
@@ -65,6 +70,8 @@ class Report:
             lines.append("")
             for key, value in self.meta.items():
                 lines.append(f"- **{escape_text(key)}:** {escape_text(value)}")
+        if self.intro:
+            lines.append("\n" + self.intro.strip())
         for section in self.sections:
             lines.append("\n" + "#" * section.level + f" {escape_text(section.title)}\n")
             # NOTE: body_md is deliberately NOT escaped -- it is Markdown by
@@ -155,6 +162,27 @@ def findings_table(rows: list[dict], columns: list[str]) -> str:
             cells.append(cell)
         lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines)
+
+
+SEVERITY_MEANINGS = {
+    "CRITICAL": "act now; actively exploitable or already failing",
+    "HIGH": "fix soon; a real risk, not yet an emergency",
+    "MEDIUM": "plan a fix this quarter",
+    "LOW": "worth fixing when touching the resource anyway",
+    "INFORMATIONAL": "context only, no action required",
+    "PASS": "check passed, nothing to do",
+}
+
+
+def severity_legend(levels) -> str:
+    """One Markdown line defining each severity level a report actually
+    uses -- and only those, so the legend never lists a value the reader
+    won't encounter. Pass the set/list of level names present."""
+    present = [lvl for lvl in SEVERITY_MEANINGS if lvl in {str(x).upper() for x in levels}]
+    if not present:
+        return ""
+    parts = [f"**{lvl}** = {SEVERITY_MEANINGS[lvl]}" for lvl in present]
+    return "Severity levels in this report: " + "; ".join(parts) + "."
 
 
 def severity_badge(severity: str) -> str:

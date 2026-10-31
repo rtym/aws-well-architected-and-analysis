@@ -2,6 +2,53 @@
 
 Notable changes to this plugin. Versions track `.claude-plugin/plugin.json`.
 
+## [Unreleased]
+
+### Fixed
+
+- **The Well-Architected pillar references were stale against the current
+  framework.** Verified every pillar's question set against the 2025-02-25
+  AWS framework documentation (URLs in `SOURCES.md`): Performance
+  Efficiency was rewritten -- AWS restructured it so PERF03 covers all data
+  management, PERF04 networking, and PERF05 is a process question the old
+  file didn't have; OPS04 is now "How do you implement observability in
+  your workload?"; OPS05 gained "ease remediation"; SUS02 is now "How do
+  you align cloud resources to your demand?"; REL04/REL05 use the full
+  "design interactions in a distributed system" wording. PERF05 joined the
+  process-only list the review skill must never mark "Yes" from API
+  evidence alone.
+- The cost report labelled Reserved Instance `UnusedHours` as a dollar
+  amount; it is a count of hours. It now reports utilization %, unused
+  hours, and `NetRISavings` (the actual dollar figure) separately.
+- The cost report printed the raw Savings Plans utilization dict into the
+  report body; it now reports the utilization percentage, unused
+  commitment, and net savings from the real response shape.
+- The organizations report said "Master account"; AWS's current term is
+  "management account" (the API field keeps its old name).
+- `aws-architecture-discovery/SKILL.md` had a garbled sentence about
+  `--all-regions` API costs left over from an incomplete edit.
+
+### Added
+
+- **A plugin-wide writing-style reference**
+  (`skills/aws-architecture-gap-analysis/references/writing-style.md`):
+  plain voice, a banned-filler vocabulary, numbers over adjectives, bold
+  for labels only, an orientation opening for every artifact, and a legend
+  for any severity/priority codes used. Every skill loads it, and a test
+  keeps it that way.
+- **Every generated report now opens with an orientation paragraph**
+  (`Report(intro=...)`): what the report is, what it covers, where to
+  start reading.
+- **Severity legends** (`severity_legend()`): reports that use severity
+  levels define each level used -- and only those -- next to the findings.
+- **A deterministic prose lint** (`shared/reporting/prose_lint.py`, CLI
+  `bin/lint-report-prose <dir>`): banned filler, unfilled template
+  placeholders, duplicated lines, duplicate headings, missing orientation
+  paragraph; code fences and table rows (quoted AWS data) are exempt. Runs
+  over every skill's rendered report and the plugin's own documentation in
+  `tests/test_prose_quality.py`, with negative tests proving each rule
+  fires.
+
 ## [1.1.3]
 
 ### Fixed

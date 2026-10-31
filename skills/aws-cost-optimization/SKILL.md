@@ -27,10 +27,11 @@ silently omitted otherwise).
 
 Load the strategy-building reference -- it has the framework for turning
 raw Cost Explorer output into a prioritized plan instead of just listing
-numbers:
+numbers -- and the writing-style rules your strategy write-up follows:
 
 ```
 view ${CLAUDE_PLUGIN_ROOT}/skills/aws-cost-optimization/references/strategy-framework.md
+view ${CLAUDE_PLUGIN_ROOT}/skills/aws-architecture-gap-analysis/references/writing-style.md
 ```
 
 Confirm with the user: profile/credentials, lookback window (default 90

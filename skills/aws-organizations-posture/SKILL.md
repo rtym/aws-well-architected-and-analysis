@@ -34,10 +34,12 @@ up front if they're unsure, since a plain member account will correctly
 report "not part of an organization" (or hit AccessDenied on most calls)
 and that's not a bug, it's the expected result for the wrong account.
 
-Load the checklist:
+Load the checklist, and the writing-style rules any prose you add on top
+of the generated report follows:
 
 ```
 view ${CLAUDE_PLUGIN_ROOT}/skills/aws-organizations-posture/references/organizations-posture-checklist.md
+view ${CLAUDE_PLUGIN_ROOT}/skills/aws-architecture-gap-analysis/references/writing-style.md
 ```
 
 ## Workflow

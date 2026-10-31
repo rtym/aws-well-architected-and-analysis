@@ -9,8 +9,8 @@ through automation.
 | REL01 | How do you manage service quotas and constraints? | Configured value for a curated set of commonly-hit quotas per region | `Quotas` (per-region evidence) -- compare against actual resource counts from the discovery inventory; `pending_quota_increase_requests()` is also available if a deeper check is requested |
 | REL02 | How do you plan your network topology? | VPC/subnet spread across AZs, Transit Gateway attachments, VPC peering | `Vpcs`, `Subnets` (`AvailabilityZone` field), `TransitGatewayAttachments`, `VpcPeeringConnections` |
 | REL03 | How do you design your workload service architecture? | ECS/EKS service counts and desired task counts, Lambda as decoupling signal | `EcsClusters[]._Services`, `EksClusters`, `LambdaFunctions` |
-| REL04 | How do you prevent failures in a distributed system? | ALB/NLB health checks, target group health check config | `LoadBalancersV2[]._TargetGroups` |
-| REL05 | How do you mitigate/withstand failures? | Auto Scaling group min/max/desired spread across AZs | `AutoScalingGroups` |
+| REL04 | How do you design interactions in a distributed system to prevent failures? | ALB/NLB health checks, target group health check config | `LoadBalancersV2[]._TargetGroups` |
+| REL05 | How do you design interactions in a distributed system to mitigate or withstand failures? | Auto Scaling group min/max/desired spread across AZs | `AutoScalingGroups` |
 | REL06 | How do you monitor workload resources? | CloudWatch alarms and dashboards actually configured -- and whether alarms have any notification action attached | `Observability.Alarms`, `Observability.AlarmsWithNoActions`, `Observability.Dashboards` |
 | REL07 | How do you adapt to changes in demand? | ASG scaling policies, DynamoDB on-demand vs provisioned billing mode | `AutoScalingGroups`, `DynamoDbTables[].BillingModeSummary` |
 | REL08 | How do you implement change? | Not API-observable (CI/CD process); ask the user about deployment pipeline and change management | Direct question |

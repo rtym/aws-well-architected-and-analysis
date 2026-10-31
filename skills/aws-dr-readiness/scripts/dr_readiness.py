@@ -73,6 +73,15 @@ def build_report(data: dict) -> Report:
     report = Report(
         title="AWS Disaster Recovery Readiness",
         subtitle="AWS Backup, RDS/S3 replication, and Route 53 failover posture",
+        intro=(
+            "This report shows what disaster-recovery machinery this account "
+            "actually has configured: AWS Backup coverage, how its RDS "
+            "databases would survive an Availability Zone or region failure, "
+            "S3 replication, and whether DNS failover is even possible. "
+            "Start with the Backup Coverage Summary; read each later section "
+            "against the recovery-time objectives the business has stated, "
+            "not against the most resilient tier by default."
+        ),
     )
 
     summary = data["Summary"]

@@ -21,7 +21,7 @@ sys.path.insert(0, str(PLUGIN_ROOT))
 from shared.awslib.cli import base_parser, formats_tuple, make_context  # noqa: E402
 from shared.awslib.collectors import network_traffic as nt  # noqa: E402
 from shared.reporting import charts, jsonutil  # noqa: E402
-from shared.reporting.report import Report, findings_table  # noqa: E402
+from shared.reporting.report import Report, escape_text, findings_table, severity_legend  # noqa: E402
 
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -47,6 +47,15 @@ def build_report(data: dict, region: str, log_group: str) -> Report:
         title="AWS VPC Network Traffic Analysis",
         subtitle=f"Region {region} -- log group {log_group}",
         meta={"Window": f"{data['Window']['Start']} to {data['Window']['End']}"},
+        intro=(
+            f"This report analyzes the VPC Flow Logs in log group "
+            f"`{escape_text(log_group)}` over the window above, plus "
+            "GuardDuty's network-related findings for the region. Start "
+            "with the GuardDuty findings (corroborated detections), then "
+            "treat the flow-log sections -- port-scan candidates, rejected "
+            "traffic, external egress -- as leads to investigate, not "
+            "verdicts."
+        ),
     )
 
     flow = data["FlowLogAnalysis"]
@@ -106,7 +115,11 @@ def build_report(data: dict, region: str, log_group: str) -> Report:
             {"Type": f.get("Type", "?"), "Severity": _severity_label(f.get("Severity", 0)), "Resource": f.get("Resource", {}).get("ResourceType", "?")}
             for f in network_findings[:40]
         ]
-        report.add_section("GuardDuty Network-Related Findings", findings_table(rows, ["Type", "Severity", "Resource"]))
+        legend = severity_legend({r["Severity"] for r in rows})
+        report.add_section(
+            "GuardDuty Network-Related Findings",
+            findings_table(rows, ["Type", "Severity", "Resource"]) + f"\n\n{legend}",
+        )
     else:
         report.add_section("GuardDuty Network-Related Findings", "No active Recon/UnauthorizedAccess/Trojan/Backdoor findings.")
 
