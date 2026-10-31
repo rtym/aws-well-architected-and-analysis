@@ -144,6 +144,13 @@ def build_report(evidence: dict, pillars: list[str]) -> Report:
     report = Report(
         title="AWS Well-Architected Review -- Evidence Pack",
         subtitle=f"Pillars: {', '.join(pillars)}",
+        intro=(
+            "This is collected evidence for a Well-Architected review, not "
+            "the review itself: raw counts and resource lists organized by "
+            "pillar, with no verdicts attached. Start with the pillar "
+            "section you are reviewing; the next section explains how the "
+            "evidence maps to the framework's questions."
+        ),
     )
     report.add_section(
         "How to use this evidence pack",

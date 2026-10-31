@@ -25,10 +25,13 @@ rather than re-asserting facts from memory.
 
 ## Before you start
 
-1. Load the synthesis framework:
+1. Load the synthesis framework, and the writing-style rules every report
+   in this plugin follows (plain voice, numbers over adjectives, an
+   orientation opening, a legend for any severity/priority codes used):
 
    ```
    view ${CLAUDE_PLUGIN_ROOT}/skills/aws-architecture-gap-analysis/references/gap-analysis-framework.md
+   view ${CLAUDE_PLUGIN_ROOT}/skills/aws-architecture-gap-analysis/references/writing-style.md
    ```
 
 2. Confirm you have (or can get) the inputs. Ask the user, or run the

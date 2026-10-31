@@ -224,3 +224,36 @@ def test_report_save_rejects_basename_that_sanitizes_to_nothing(tmp_path):
     for bad in ("", ".", "..", "/"):
         with pytest.raises(ValueError):
             report.save(str(tmp_path), bad, formats=("md",))
+
+
+def test_report_intro_renders_between_meta_and_first_section():
+    report = Report(
+        title="Intro Test",
+        meta={"Account": "123456789012"},
+        intro="Covers one account. Start with the summary.",
+    )
+    report.add_section("Summary", "body")
+    md = report.render_markdown()
+    assert md.index("**Account:**") < md.index("Start with the summary.") < md.index("## Summary")
+
+
+def test_report_without_intro_renders_unchanged():
+    report = Report(title="No Intro")
+    report.add_section("Summary", "body")
+    assert "None" not in report.render_markdown()
+
+
+def test_severity_legend_lists_only_the_levels_passed_in_taxonomy_order():
+    from shared.reporting.report import severity_legend
+
+    legend = severity_legend(["LOW", "critical"])
+    assert legend.index("CRITICAL") < legend.index("LOW")
+    for absent in ("HIGH", "MEDIUM", "INFORMATIONAL", "PASS"):
+        assert f"**{absent}**" not in legend
+
+
+def test_severity_legend_empty_or_unknown_levels_returns_empty_string():
+    from shared.reporting.report import severity_legend
+
+    assert severity_legend([]) == ""
+    assert severity_legend(["BOGUS"]) == ""

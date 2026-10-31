@@ -36,7 +36,18 @@ def collect(ctx, home_region: str) -> dict:
 
 
 def build_report(posture: dict) -> Report:
-    report = Report(title="AWS Organizations Posture")
+    report = Report(
+        title="AWS Organizations Posture",
+        intro=(
+            "This report covers the governance layer above any single "
+            "account: whether this account belongs to an AWS Organization, "
+            "which member accounts exist, where Service Control Policies "
+            "are attached, and whether GuardDuty and Security Hub are "
+            "managed centrally for the whole organization. Start with the "
+            "Organization Summary; the sections below it carry the "
+            "per-account detail."
+        ),
+    )
 
     if not posture.get("IsOrganizationsMember"):
         report.add_section(
@@ -59,7 +70,9 @@ def build_report(posture: dict) -> Report:
         "Organization Summary",
         "\n".join(
             [
-                f"- **Master account:** {org.get('MasterAccountId', '?')}",
+                # The API field is still MasterAccountId; AWS's current term
+                # for it is "management account".
+                f"- **Management account:** {org.get('MasterAccountId', '?')}",
                 f"- **Feature set:** {org.get('FeatureSet', '?')}",
                 f"- **Member accounts:** {len(accounts)}",
                 f"- **Service Control Policies defined:** {len(policies)}",

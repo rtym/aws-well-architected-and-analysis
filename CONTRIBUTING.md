@@ -133,7 +133,32 @@ must:
 Bump the expected count in `test_expected_skill_count`, and add the skill
 to the table in `README.md`.
 
-## 6. Grounding reference content
+## 6. Artifact prose is a deliverable
+
+The reports these skills produce are read by human stakeholders, and the
+historical complaint about generated reports is that they read
+machine-written. The rules live in one place --
+`skills/aws-architecture-gap-analysis/references/writing-style.md` -- and
+every SKILL.md loads it (`test_every_skill_loads_the_writing_style_reference`).
+
+The mechanical half is enforced by `shared/reporting/prose_lint.py`:
+banned filler vocabulary, unfilled template placeholders, duplicated
+lines/headings, and a required orientation paragraph before the first
+section. `tests/test_prose_quality.py` runs it over every skill's rendered
+report *and* the plugin's own Markdown. To check real generated output,
+run `bin/lint-report-prose reports/output`.
+
+Practical consequences when you touch a `build_report()`:
+
+- Keep the `intro=` orientation paragraph accurate -- it must still say
+  what the report covers and where to start after your change.
+- If you add a section that uses severity levels, feed the levels actually
+  present to `severity_legend()` rather than hand-writing a legend.
+- New fixed prose must pass the lint; if the lint blocks a word you
+  genuinely need, change the lint and its tests deliberately, in the same
+  commit, with the reason in the message.
+
+## 7. Grounding reference content
 
 Reference docs under `skills/*/references/` encode AWS facts that go stale
 (finding-type catalogues, log record formats, framework questions). When

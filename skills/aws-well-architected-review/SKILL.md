@@ -33,7 +33,15 @@ Read-only. See `${CLAUDE_PLUGIN_ROOT}/PERMISSIONS.md` for the IAM policy.
    which region(s) (default: the profile's configured region), and whether
    they have an existing AWS Well-Architected Tool workload to
    cross-reference (`--workload-id`).
-2. Load the question catalogue for every pillar in scope --
+2. Load the writing-style rules the findings report you author in Steps
+   3-5 must follow (plain voice, numbers over adjectives, an orientation
+   opening, a legend for the HRI/MRI codes used):
+
+```
+view ${CLAUDE_PLUGIN_ROOT}/skills/aws-architecture-gap-analysis/references/writing-style.md
+```
+
+3. Load the question catalogue for every pillar in scope --
    these are the actual AWS Well-Architected Framework best-practice
    questions, not something to improvise:
 
@@ -132,6 +140,6 @@ re-deriving the same facts.
 2. Every "No" or "Partial" verdict cites a specific resource ID, count, or
    quote from the evidence pack -- no unsupported assertions.
 3. Process-only questions (OPS01-03, OPS05, OPS07, OPS10-11, SEC10-11,
-   REL08, REL12, COST10-11) are never marked "Yes" without the user having
-   actually confirmed the practice -- these cannot be inferred from AWS
-   API state alone.
+   REL08, REL12, PERF05, COST10-11) are never marked "Yes" without the
+   user having actually confirmed the practice -- these cannot be
+   inferred from AWS API state alone.

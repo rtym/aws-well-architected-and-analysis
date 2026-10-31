@@ -200,6 +200,7 @@ The suite covers four layers:
 | Collectors | `test_collectors_*.py` | Each AWS call's request shape, response parsing, and graceful degradation when a service is disabled or a permission is missing |
 | Reporting | `test_reporting.py`, `test_jsonutil.py` | Chart rendering, Markdown/HTML/PDF output, and the HTML-escaping contract (see `CONTRIBUTING.md`) |
 | Report assembly | `test_skill_scripts.py` | Each skill's `build_report()` against synthetic evidence |
+| Prose quality | `test_prose_quality.py` | Every rendered report and the plugin's own docs pass the prose lint (no filler vocabulary, no unfilled placeholders, orientation paragraph present, severity legends list only used levels) |
 | End-to-end + structure | `test_script_main.py`, `test_skill_integrity.py`, `test_cli.py`, `test_session.py` | Each script's `main()` writing real files; SKILL.md frontmatter, name/directory agreement, and that every `${CLAUDE_PLUGIN_ROOT}` path a skill references exists |
 
 CI (`.github/workflows/tests.yml`) runs the full suite on Python 3.11,
@@ -215,6 +216,12 @@ change it) in Markdown, HTML, and PDF (`--formats` to pick a subset). Pass
 recommended whenever you plan to run more than one skill in the same
 session, since `aws-architecture-gap-analysis` and follow-up questions
 read that JSON instead of re-querying AWS.
+
+Reports open with an orientation paragraph and define the severity levels
+they use; `bin/lint-report-prose reports/output` re-checks a batch of
+generated reports against the plugin's writing rules (filler vocabulary,
+unfilled placeholders, duplicated lines) in one sorted-order pass, exiting
+non-zero on any failure.
 
 > **Generated reports contain real account data** -- account IDs, resource
 > names and ARNs, IAM usernames, security findings, and (for `--json-out`)

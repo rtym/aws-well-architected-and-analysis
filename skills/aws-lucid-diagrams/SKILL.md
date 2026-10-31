@@ -67,7 +67,11 @@ confirm before re-running `ToolSearch("Lucid")`.
 ```
 view ${CLAUDE_PLUGIN_ROOT}/skills/aws-lucid-diagrams/references/icon-and-layout-guide.md
 view ${CLAUDE_PLUGIN_ROOT}/skills/aws-lucid-diagrams/references/diagram-conventions.md
+view ${CLAUDE_PLUGIN_ROOT}/skills/aws-architecture-gap-analysis/references/writing-style.md
 ```
+
+(The third is the plugin-wide writing style -- it governs any label,
+legend entry, or summary text you write for the board and the handoff.)
 
 The first has the resource-type -> AWS icon-category mapping, the concrete
 Lucid shape-library resource URIs, the container-padding/containment

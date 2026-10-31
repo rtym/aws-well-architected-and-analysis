@@ -30,7 +30,11 @@ Read-only. See `${CLAUDE_PLUGIN_ROOT}/PERMISSIONS.md` for the IAM policy.
 
    ```
    view ${CLAUDE_PLUGIN_ROOT}/skills/aws-dr-readiness/references/dr-strategy-tiers.md
+   view ${CLAUDE_PLUGIN_ROOT}/skills/aws-architecture-gap-analysis/references/writing-style.md
    ```
+
+   (The second is the plugin-wide writing style for the readiness
+   assessment you write on top of the generated report.)
 
 2. **Ask the user what their actual RTO/RPO targets are, or whether they
    even have documented ones**, before assessing "readiness" -- a

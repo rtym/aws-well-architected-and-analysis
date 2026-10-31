@@ -36,10 +36,12 @@ against existing log data; it does not modify anything. See
    logs exist to analyze."
 
 2. Load the detection reference for what each canned query is actually
-   looking for and AWS's own guidance on network threat detection:
+   looking for and AWS's own guidance on network threat detection, plus
+   the writing-style rules your investigation write-up follows:
 
    ```
    view ${CLAUDE_PLUGIN_ROOT}/skills/aws-network-traffic-analysis/references/detection-guide.md
+   view ${CLAUDE_PLUGIN_ROOT}/skills/aws-architecture-gap-analysis/references/writing-style.md
    ```
 
 3. Confirm with the user: profile/credentials, region, the CloudWatch Logs

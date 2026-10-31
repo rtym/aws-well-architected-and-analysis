@@ -21,7 +21,7 @@ sys.path.insert(0, str(PLUGIN_ROOT))
 from shared.awslib.cli import base_parser, formats_tuple, make_context, resolve_regions  # noqa: E402
 from shared.awslib.collectors import cloudtrail, compute, data_stores, security, vpc  # noqa: E402
 from shared.reporting import charts, jsonutil  # noqa: E402
-from shared.reporting.report import Report, findings_table  # noqa: E402
+from shared.reporting.report import Report, escape_text, findings_table, severity_legend  # noqa: E402
 
 SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFORMATIONAL"]
 
@@ -65,7 +65,22 @@ def guardduty_severity_label(score: float) -> str:
 
 
 def build_report(data: dict) -> Report:
-    report = Report(title="AWS Security Review", subtitle="GuardDuty, Security Hub, IAM, and network exposure findings")
+    # Region names come from CLI input/DescribeRegions; escaped because the
+    # intro is a section-body-style sink (not escaped by Report, by contract).
+    regions = escape_text(", ".join(data["Regions"])) or "none"
+    report = Report(
+        title="AWS Security Review",
+        subtitle="GuardDuty, Security Hub, IAM, and network exposure findings",
+        intro=(
+            f"This report assesses the security posture of one AWS account "
+            f"across region(s) {regions}: whether the core detection "
+            "services are on, what they found, and the concrete exposure "
+            "items (open security groups, public or unencrypted S3 buckets, "
+            "listeners without TLS). Start with Regional Coverage to see "
+            "which detection services are enabled where, then work down the "
+            "findings tables in severity order."
+        ),
+    )
 
     ct = data["Global"]["CloudTrail"]
     ct_lines = [
@@ -139,7 +154,10 @@ def build_report(data: dict) -> Report:
     non_zero = {k: v for k, v in severity_counts.items() if v}
     if non_zero:
         sev_chart = charts.bar_chart(list(non_zero), list(non_zero.values()), title="Findings by severity (GuardDuty + Security Hub)", ylabel="Count")
-        report.add_section("Finding Severity Distribution", f"![Severity distribution]({sev_chart})")
+        report.add_section(
+            "Finding Severity Distribution",
+            f"![Severity distribution]({sev_chart})\n\n{severity_legend(non_zero)}",
+        )
 
     if all_sh_findings:
         rows = [

@@ -28,10 +28,12 @@ configured -- and surfaces concrete, resource-level gaps. Read-only. See
 
 ## Before you start
 
-Load the finding-severity and standards reference:
+Load the finding-severity and standards reference, and the writing-style
+rules any prose you add on top of the generated report follows:
 
 ```
 view ${CLAUDE_PLUGIN_ROOT}/skills/aws-security-review/references/severity-and-standards.md
+view ${CLAUDE_PLUGIN_ROOT}/skills/aws-architecture-gap-analysis/references/writing-style.md
 ```
 
 Confirm scope with the user: profile/credentials, region(s) (GuardDuty,

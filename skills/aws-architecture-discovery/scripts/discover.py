@@ -342,6 +342,15 @@ def build_report(inventory: dict, region_counts: dict[str, dict[str, int]]) -> R
         title="AWS Architecture Discovery",
         subtitle="Infrastructure inventory across VPC, compute, container, and data-store services",
         meta={"Account": inventory.get("AccountId") or "unknown", "Regions scanned": ", ".join(region_counts)},
+        intro=(
+            "This report is an as-built inventory of what is actually "
+            "deployed in this account: resource counts per region, a network "
+            "topology diagram per region (each diagram ends with its own "
+            "legend), and the account-wide S3 posture. Start with the "
+            "Resource Inventory Summary chart, then the section for the "
+            "region you care about. It records what exists; judging it is "
+            "the gap-analysis report's job."
+        ),
     )
 
     categories = list(region_counts)
