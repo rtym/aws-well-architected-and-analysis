@@ -1,6 +1,7 @@
 # AWS Well-Architected & Analysis
 
 [![Tests](https://github.com/rtym/aws-well-architected-and-analysis/actions/workflows/tests.yml/badge.svg)](https://github.com/rtym/aws-well-architected-and-analysis/actions/workflows/tests.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 A Claude Code plugin for analyzing AWS accounts: Well-Architected Framework
 reviews, cost optimization, security posture, architecture discovery and
