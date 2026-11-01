@@ -715,3 +715,128 @@ def test_dr_readiness_build_report_no_hosted_zones_states_gap():
     report = dr_readiness.build_report(data)
     md = _assert_renders(report)
     assert "No Route 53 hosted zones found" in md
+
+
+def test_analyze_cost_report_with_every_section_populated():
+    """Exercises the populated branch of every cost-report section at once:
+    RI/SP utilization (with the real nested response shapes), rightsizing,
+    Compute Optimizer, Trusted Advisor, anomalies, and budgets."""
+    data = {
+        "CostReport": {
+            "CostByService": [
+                {"TimePeriod": {"Start": "2024-01-01", "End": "2024-02-01"}, "Groups": [
+                    {"Keys": ["Amazon EC2"], "Metrics": {"UnblendedCost": {"Amount": "100.0"}}},
+                ]},
+            ],
+            "ReservationUtilization": {
+                "Total": {"UtilizationPercentage": "88.5", "UnusedHours": "120", "NetRISavings": "432.10"}
+            },
+            "SavingsPlansUtilization": {
+                "Total": {
+                    "Utilization": {"UtilizationPercentage": "97.2", "UnusedCommitment": "14.00"},
+                    "Savings": {"NetSavings": "210.00"},
+                }
+            },
+            "RightsizingRecommendations": [
+                {
+                    "CurrentInstance": {"ResourceId": "i-123"},
+                    "RightsizingType": "MODIFY",
+                    "FindingReasonCodes": ["CPU_OVER_PROVISIONED"],
+                }
+            ],
+            "TrustedAdvisorCostChecks": [
+                {"check": "Low Utilization Amazon EC2 Instances", "status": "warning", "flaggedResources": [{"id": "i-123"}]}
+            ],
+            "Anomalies": [
+                {"AccountId": "123456789012", "Impact": {"TotalImpact": 42.5}, "AnomalyStartDate": "2024-02-10"}
+            ],
+            "Budgets": [
+                {
+                    "BudgetName": "monthly-cap",
+                    "BudgetType": "COST",
+                    "BudgetLimit": {"Amount": "1000", "Unit": "USD"},
+                    "CalculatedSpend": {"ActualSpend": {"Amount": "800"}},
+                }
+            ],
+        },
+        "ComputeOptimizerEc2": {
+            "us-east-1": [
+                {
+                    "instanceArn": "arn:aws:ec2:us-east-1:123456789012:instance/i-123",
+                    "finding": "OVER_PROVISIONED",
+                    "recommendationOptions": [{"instanceType": "t3.small"}],
+                }
+            ]
+        },
+        "ComputeOptimizerEbs": {"us-east-1": []},
+        "IdleResources": {"us-east-1": {"UnattachedVolumes": [1], "UnassociatedEips": [1], "StoppedInstances": []}},
+    }
+    md = _assert_renders(analyze_cost.build_report(data, "2024-01-01", "2024-03-01"))
+
+    # Regression: UnusedHours was labelled as a dollar amount. It is hours;
+    # the dollar figure is NetRISavings, reported separately.
+    assert "88.5%, 120 purchased hours unused, net savings $432.10" in md
+    assert "$120" not in md
+    # Regression: the Savings Plans Total dict was printed raw into the
+    # report; now its nested utilization/savings fields are formatted.
+    assert "97.2%, $14.00 committed but unused, net savings $210.00" in md
+    assert "{'Utilization'" not in md
+
+    assert "i-123" in md
+    assert "t3.small" in md
+    assert "Low Utilization Amazon EC2 Instances" in md
+    assert "monthly-cap" in md
+    assert "2024-02-10" in md
+    assert "Idle resource candidates by region" in md or "Idle Resource Chart" in md
+
+
+def test_guardduty_severity_score_to_label_boundaries():
+    """AWS documents GuardDuty severity bands as low < 4 <= medium < 7 <= high;
+    both scripts translate scores with the same thresholds."""
+    for label_fn in (security_scan.guardduty_severity_label, traffic_analysis._severity_label):
+        assert label_fn(8.2) == "HIGH"
+        assert label_fn(7.0) == "HIGH"
+        assert label_fn(6.9) == "MEDIUM"
+        assert label_fn(4.0) == "MEDIUM"
+        assert label_fn(3.9) == "LOW"
+        assert label_fn(0.0) == "LOW"
+
+
+def test_analyze_organization_report_shows_mixed_status_chart_and_delegated_admins():
+    """Covers the branches the other org test misses: the account-status
+    chart (drawn only when statuses are mixed) and the populated
+    delegated-administrators table."""
+    posture = {
+        "IsOrganizationsMember": True,
+        "Organization": {"MasterAccountId": "123456789012", "FeatureSet": "ALL"},
+        "Accounts": [
+            {"Id": "111111111111", "Name": "prod", "Email": "prod@example.com", "Status": "ACTIVE"},
+            {"Id": "333333333333", "Name": "old", "Email": "old@example.com", "Status": "SUSPENDED"},
+        ],
+        "ServiceControlPolicies": [],
+        "AccountsWithoutScpCoverage": [],
+        "DelegatedAdministrators": [
+            {"Id": "444444444444", "Name": "security-tooling", "Email": "sec@example.com"}
+        ],
+        "GuardDutyOrganizationAdmin": {"AdminAccountId": "444444444444"},
+        "SecurityHubOrganizationAdmin": {"AccountId": "444444444444"},
+    }
+    md = _assert_renders(analyze_organization.build_report(posture))
+    assert "Account status" in md  # the mixed-status chart was drawn
+    assert "security-tooling" in md
+    assert "Every account has at least one directly-attached SCP." in md
+    # AWS's current term, not the legacy API field name.
+    assert "Management account" in md and "Master account" not in md
+
+
+def test_analyze_organization_collect_is_a_passthrough(monkeypatch):
+    recorded = {}
+
+    def fake_posture(ctx, home_region):
+        recorded["home_region"] = home_region
+        return {"IsOrganizationsMember": False}
+
+    monkeypatch.setattr(analyze_organization.organizations, "collect_organization_posture", fake_posture)
+    out = analyze_organization.collect(object(), "eu-central-1")
+    assert out == {"IsOrganizationsMember": False}
+    assert recorded["home_region"] == "eu-central-1"

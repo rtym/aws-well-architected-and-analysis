@@ -159,3 +159,24 @@ def test_diagram_skills_load_the_shared_diagram_conventions(skill_name):
     assert DIAGRAM_CONVENTIONS in text, (
         f"{skill_name}/SKILL.md no longer loads {DIAGRAM_CONVENTIONS}"
     )
+
+
+MARKDOWN_DOCS = sorted(
+    p for p in list(ROOT.glob("*.md")) + list((ROOT / "skills").rglob("*.md"))
+)
+
+
+@pytest.mark.parametrize("doc", MARKDOWN_DOCS, ids=lambda p: p.relative_to(ROOT).as_posix())
+def test_relative_markdown_links_resolve(doc):
+    """A broken relative link in a README or reference fails silently --
+    the reader clicks it and lands nowhere. External URLs are not checked
+    (that needs a network); anchors within a page aren't either."""
+    text = doc.read_text()
+    broken = []
+    for match in re.finditer(r"\[([^\]]+)\]\(([^)\s]+)\)", text):
+        target = match.group(2)
+        if target.startswith(("http://", "https://", "mailto:", "#", "data:")):
+            continue
+        if not (doc.parent / target.split("#")[0]).resolve().exists():
+            broken.append(target)
+    assert not broken, f"{doc.relative_to(ROOT)}: broken relative links: {broken}"

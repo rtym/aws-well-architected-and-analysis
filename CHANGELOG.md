@@ -48,6 +48,23 @@ Notable changes to this plugin. Versions track `.claude-plugin/plugin.json`.
   over every skill's rendered report and the plugin's own documentation in
   `tests/test_prose_quality.py`, with negative tests proving each rule
   fires.
+- **Coverage raised from 93% to 98% of `shared/` + `skills/` lines**
+  (suite 361 -> 431 tests), closing the untested seams the existing suite
+  surrounded: every script's `collect()` orchestration (which collector
+  runs per region vs. once, and under which evidence key its result lands
+  -- the JSON contract `aws-architecture-gap-analysis` reads), the DR
+  report's cross-region backup merge, root-account risk detection and
+  `collect_global_security()`, Security Hub status/finding-cap paths, EKS
+  nodegroup enrichment, ELBv2 target-group/listener and ACM certificate
+  enrichment, Trusted Advisor's category filter and missing-support-plan
+  degradation, the Logs Insights polling loop, the organizations posture
+  wiring and mixed-account-status report branches, GuardDuty severity
+  band boundaries, the populated branch of every cost-report section, and
+  the unexpected-error propagation paths (S3 bucket helpers,
+  `is_organizations_member`). A new structural test also fails on any
+  broken relative Markdown link in the repo's docs. `make cov` runs the
+  suite with the coverage report (`pytest-cov` added to dev
+  requirements).
 
 ## [1.1.3]
 

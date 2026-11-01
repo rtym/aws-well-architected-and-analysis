@@ -239,3 +239,51 @@ def test_config_rule_compliance_not_implemented_service_still_handled(ctx):
     result = security.config_rule_compliance(ctx, "us-east-1")
 
     assert result[0]["ConfigRuleName"] == "s3-bucket-public-read-prohibited"
+
+def test_securityhub_status_enabled_with_standards(ctx):
+    sh_client, stub = install_stub(ctx, "securityhub", region="us-east-1")
+    stub.add_response("describe_hub", {"HubArn": "arn:aws:securityhub:us-east-1:123456789012:hub/default"})
+    stub.add_response(
+        "get_enabled_standards",
+        {
+            "StandardsSubscriptions": [
+                {
+                    "StandardsSubscriptionArn": "arn:aws:securityhub:us-east-1:123456789012:subscription/cis-aws-foundations-benchmark/v/1.2.0",
+                    "StandardsArn": "arn:aws:securityhub:::ruleset/cis-aws-foundations/v/1.2.0",
+                    "StandardsInput": {},
+                    "StandardsStatus": "READY",
+                }
+            ]
+        },
+    )
+
+    status = security.securityhub_status(ctx, "us-east-1")
+    assert status["Enabled"] is True
+    assert status["HubArn"].endswith("hub/default")
+    assert len(status["EnabledStandards"]) == 1
+
+
+def test_securityhub_findings_stop_at_max_findings(ctx):
+    """A noisy account can hold thousands of active findings; the collector
+    must cap rather than pull them all into memory and the report."""
+    sh_client, stub = install_stub(ctx, "securityhub", region="us-east-1")
+    finding = {
+        "SchemaVersion": "2018-10-08",
+        "Id": "f",
+        "ProductArn": "arn:aws:securityhub:us-east-1::product/aws/securityhub",
+        "GeneratorId": "g",
+        "AwsAccountId": "123456789012",
+        "CreatedAt": "2024-01-01T00:00:00Z",
+        "UpdatedAt": "2024-01-01T00:00:00Z",
+        "Title": "t",
+        "Description": "d",
+        "Resources": [{"Type": "AwsS3Bucket", "Id": "arn:aws:s3:::b"}],
+        "Severity": {"Label": "HIGH"},
+    }
+    stub.add_response(
+        "get_findings",
+        {"Findings": [dict(finding, Id=f"f-{i}") for i in range(5)]},
+    )
+
+    findings = security.securityhub_findings(ctx, "us-east-1", max_findings=3)
+    assert len(findings) == 3

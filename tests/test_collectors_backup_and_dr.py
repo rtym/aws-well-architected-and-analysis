@@ -116,3 +116,43 @@ def test_dr_readiness_summary_assembles_all_inputs():
     assert summary["Backup"]["ProtectedResourceCount"] == 2
     assert len(summary["Rds"]["SingleAzInstances"]) == 1
     assert summary["Route53HealthChecks"] == [{"Id": "hc-1"}]
+
+
+@mock_aws
+def test_list_backup_vaults_collected(ctx):
+    bk = boto3.client("backup", region_name="us-east-1")
+    bk.create_backup_vault(BackupVaultName="vault-1")
+
+    vaults = backup.list_backup_vaults(ctx, "us-east-1")
+    assert any(v["BackupVaultName"] == "vault-1" for v in vaults)
+
+
+def test_list_recent_jobs_passes_the_state_filter(ctx):
+    """moto doesn't implement ListBackupJobs, so stub it -- and pin that the
+    ByState filter actually reaches the API: without it the report's
+    'recent failed jobs' count would silently include successful jobs."""
+    from tests.stub_helpers import install_stub
+
+    bk_client, stub = install_stub(ctx, "backup", region="us-east-1")
+    stub.add_response(
+        "list_backup_jobs",
+        {"BackupJobs": [{"BackupJobId": "job-1", "State": "FAILED"}]},
+        expected_params={"ByState": "FAILED"},
+    )
+
+    jobs = backup.list_recent_jobs(ctx, "us-east-1", by_state="FAILED")
+    assert [j["BackupJobId"] for j in jobs] == ["job-1"]
+    stub.assert_no_pending_responses()
+
+
+def test_backup_optional_calls_return_empty_on_access_denied(ctx):
+    """list_protected_resources / list_backup_jobs need extra IAM actions a
+    minimal read-only policy may omit -- that degrades, never aborts."""
+    from tests.stub_helpers import install_stub
+
+    bk_client, stub = install_stub(ctx, "backup", region="us-east-1")
+    stub.add_client_error("list_protected_resources", service_error_code="AccessDeniedException")
+    assert backup.list_protected_resources(ctx, "us-east-1") == []
+
+    stub.add_client_error("list_backup_jobs", service_error_code="AccessDeniedException")
+    assert backup.list_recent_jobs(ctx, "us-east-1", by_state="FAILED") == []

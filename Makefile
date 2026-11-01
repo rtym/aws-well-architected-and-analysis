@@ -6,7 +6,7 @@ PY   := $(VENV)/bin/python
 PIP  := $(VENV)/bin/pip
 
 .DEFAULT_GOAL := help
-.PHONY: help setup test lint fmt check clean
+.PHONY: help setup test lint fmt check cov clean
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -20,6 +20,9 @@ setup: ## Create the venv and install dev dependencies
 
 test: ## Run the full test suite
 	$(PY) -m pytest
+
+cov: ## Test suite with line coverage over shared/ and skills/
+	$(PY) -m pytest -q --cov=shared --cov=skills --cov-report=term-missing
 
 lint: ## Lint (same rule selection as CI, via pyproject.toml)
 	$(VENV)/bin/ruff check shared/ skills/ tests/

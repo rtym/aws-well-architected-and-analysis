@@ -142,3 +142,26 @@ def test_bucket_replication_configured_branch_returns_configuration(ctx):
     source = next(b for b in buckets if b["Name"] == "source-bucket")
     assert source["_Replication"] is not None
     assert source["_Replication"]["Role"] == role_arn
+
+
+def test_bucket_helpers_propagate_unexpected_s3_errors():
+    """The per-bucket helpers treat exactly one error code each as "not
+    configured" -- anything else (throttle, outage, wrong-region redirect)
+    must propagate, not silently read as "no replication/encryption/PAB"."""
+    import boto3
+    import pytest
+    from botocore.exceptions import ClientError
+    from botocore.stub import Stubber
+
+    s3 = boto3.client("s3", region_name="us-east-1")
+    cases = [
+        (data_stores._bucket_replication, "get_bucket_replication"),
+        (data_stores._bucket_public_access_block, "get_public_access_block"),
+        (data_stores._bucket_encryption, "get_bucket_encryption"),
+    ]
+    for helper, operation in cases:
+        with Stubber(s3) as stub:
+            stub.add_client_error(operation, service_error_code="PermanentRedirect")
+            with pytest.raises(ClientError) as exc:
+                helper(s3, "some-bucket")
+            assert exc.value.response["Error"]["Code"] == "PermanentRedirect"
