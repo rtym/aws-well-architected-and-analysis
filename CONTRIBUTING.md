@@ -4,6 +4,16 @@ Conventions and invariants for extending this plugin. These are not style
 preferences -- each one below exists because getting it wrong produced a
 real bug, and each is enforced by a test.
 
+## 0. Licensing
+
+The plugin is MIT-licensed ([LICENSE](LICENSE)), and contributions are
+accepted under the same terms (inbound = outbound): by submitting a pull
+request you agree your contribution is licensed under the repository's MIT
+license. Reuse of this code elsewhere -- including in public code indexes
+and reference corpora -- is welcome under those terms; keep the copyright
+notice and attribute the repo
+(`rtym/aws-well-architected-and-analysis`).
+
 ## 1. Read-only is a hard constraint
 
 Every collector calls only `Describe*` / `List*` / `Get*`. Adding a call
