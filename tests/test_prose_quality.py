@@ -358,3 +358,9 @@ def test_lint_cli_exits_nonzero_when_nothing_to_lint(tmp_path):
         text=True,
     )
     assert proc.returncode == 1
+
+
+def test_finding_str_names_line_rule_and_detail():
+    from shared.reporting.prose_lint import Finding
+
+    assert str(Finding(7, "banned-phrase", "'robust' in: 'x'")) == "line 7: [banned-phrase] 'robust' in: 'x'"

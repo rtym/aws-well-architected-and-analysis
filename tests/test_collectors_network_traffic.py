@@ -65,3 +65,27 @@ def test_network_findings_filters_by_type_prefix(ctx, monkeypatch):
     result = network_traffic.network_findings(ctx, "us-east-1")
 
     assert {f["Id"] for f in result} == {"1", "3"}
+
+
+def test_run_insights_query_polls_until_complete(ctx, monkeypatch):
+    """Logs Insights queries are asynchronous: the first poll usually comes
+    back Running. The collector must keep polling (without a real 2s sleep
+    in tests) and only parse rows from the terminal response."""
+    from shared.awslib.collectors import network_traffic as nt
+
+    monkeypatch.setattr(nt.time, "sleep", lambda s: None)
+    logs_client, stub = install_stub(ctx, "logs", region="us-east-1")
+    stub.add_response("start_query", {"queryId": "q-1"})
+    stub.add_response("get_query_results", {"status": "Running", "results": []})
+    stub.add_response(
+        "get_query_results",
+        {
+            "status": "Complete",
+            "results": [[{"field": "srcAddr", "value": "10.0.0.5"}, {"field": "totalBytes", "value": "99"}]],
+        },
+    )
+
+    rows = nt.run_insights_query(ctx, "us-east-1", "/vpc/fl", "stats ...", 0, 100)
+
+    assert rows == [{"srcAddr": "10.0.0.5", "totalBytes": "99"}]
+    stub.assert_no_pending_responses()

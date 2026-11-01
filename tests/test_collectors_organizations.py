@@ -126,3 +126,51 @@ def test_accounts_without_scp_coverage():
     uncovered = organizations.accounts_without_scp_coverage(accounts, policies)
 
     assert [a["Id"] for a in uncovered] == ["222222222222"]
+
+
+def test_describe_organization_returns_none_when_not_in_an_organization(ctx):
+    org, stub = install_stub(ctx, "organizations")
+    stub.add_client_error("describe_organization", service_error_code="AWSOrganizationsNotInUseException")
+
+    assert organizations.describe_organization(ctx) is None
+
+
+def test_is_organizations_member_propagates_unexpected_errors(ctx):
+    """Only the documented "no org visibility" codes mean False -- a
+    throttle or outage must surface, not masquerade as a standalone account."""
+    import pytest
+    from botocore.exceptions import ClientError
+
+    org, stub = install_stub(ctx, "organizations")
+    stub.add_client_error("describe_organization", service_error_code="ThrottlingException")
+
+    with pytest.raises(ClientError) as exc:
+        organizations.is_organizations_member(ctx)
+    assert exc.value.response["Error"]["Code"] == "ThrottlingException"
+
+
+def test_collect_organization_posture_wires_every_key(ctx, monkeypatch):
+    """collect_organization_posture() itself (the dict the report and the
+    gap-analysis JSON contract read) -- collectors are monkeypatched because
+    moto doesn't implement the GuardDuty/SecurityHub org-admin lookups."""
+    monkeypatch.setattr(organizations, "is_organizations_member", lambda ctx: True)
+    monkeypatch.setattr(organizations, "list_accounts", lambda ctx: [{"Id": "1" * 12}])
+    monkeypatch.setattr(organizations, "list_service_control_policies", lambda ctx: [])
+    monkeypatch.setattr(organizations, "describe_organization", lambda ctx: {"MasterAccountId": "2" * 12})
+    monkeypatch.setattr(organizations, "list_delegated_administrators", lambda ctx: [{"Id": "3" * 12}])
+    monkeypatch.setattr(organizations, "guardduty_organization_admin", lambda ctx, region: {"AdminAccountId": "4" * 12, "_Region": region})
+    monkeypatch.setattr(organizations, "securityhub_organization_admin", lambda ctx, region: None)
+
+    posture = organizations.collect_organization_posture(ctx, "eu-west-1")
+
+    assert posture["IsOrganizationsMember"] is True
+    assert set(posture) == {
+        "IsOrganizationsMember", "Organization", "Accounts", "ServiceControlPolicies",
+        "AccountsWithoutScpCoverage", "DelegatedAdministrators",
+        "GuardDutyOrganizationAdmin", "SecurityHubOrganizationAdmin",
+    }
+    # Accounts with no SCP at all are uncovered; the admin lookups must be
+    # asked in the caller's home region (they are regional APIs).
+    assert posture["AccountsWithoutScpCoverage"] == [{"Id": "1" * 12}]
+    assert posture["GuardDutyOrganizationAdmin"]["_Region"] == "eu-west-1"
+    assert posture["SecurityHubOrganizationAdmin"] is None

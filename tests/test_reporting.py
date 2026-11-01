@@ -257,3 +257,29 @@ def test_severity_legend_empty_or_unknown_levels_returns_empty_string():
 
     assert severity_legend([]) == ""
     assert severity_legend(["BOGUS"]) == ""
+
+
+def test_line_chart_multi_series_renders_with_legend():
+    uri = charts.line_chart(
+        ["2024-01", "2024-02"],
+        {"Amazon EC2": [10.0, 12.0], "Amazon S3": [5.0, 4.0]},
+        title="Trend",
+        ylabel="USD",
+    )
+    assert uri.startswith("data:image/png;base64,")
+
+
+def test_pie_chart_all_zero_keeps_its_title():
+    uri = charts.pie_chart(["a"], [0], title="Empty but titled")
+    assert uri.startswith("data:image/png;base64,")
+
+
+def test_histogram_renders_png_data_uri():
+    uri = charts.histogram([1, 2, 2, 3, 5], bins=4, title="H", xlabel="x")
+    assert uri.startswith("data:image/png;base64,")
+
+
+def test_image_helper_builds_markdown_image():
+    from shared.reporting.report import image
+
+    assert image("data:image/png;base64,abc", alt="chart") == "![chart](data:image/png;base64,abc)"

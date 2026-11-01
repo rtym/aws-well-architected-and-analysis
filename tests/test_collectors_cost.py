@@ -418,3 +418,55 @@ def test_collect_evidence_does_not_crash_on_data_unavailable(ctx, monkeypatch):
     stub.assert_no_pending_responses()
     assert evidence["Global"]["Cost"]["SavingsPlansUtilization"] == {}
     assert evidence["Global"]["Cost"]["ReservationUtilization"] == {}
+
+
+def test_trusted_advisor_cost_checks_filters_to_cost_category(ctx):
+    support_client, stub = install_stub(ctx, "support", region="us-east-1")
+    stub.add_response(
+        "describe_trusted_advisor_checks",
+        {
+            "checks": [
+                {"id": "c1", "name": "Low Utilization Amazon EC2 Instances", "description": "", "category": "cost_optimizing", "metadata": []},
+                {"id": "s1", "name": "Security Groups", "description": "", "category": "security", "metadata": []},
+            ]
+        },
+        expected_params={"language": "en"},
+    )
+    stub.add_response(
+        "describe_trusted_advisor_check_result",
+        {
+            "result": {
+                "checkId": "c1",
+                "timestamp": "2024-01-01T00:00:00Z",
+                "status": "warning",
+                "resourcesSummary": {
+                    "resourcesProcessed": 1,
+                    "resourcesFlagged": 1,
+                    "resourcesIgnored": 0,
+                    "resourcesSuppressed": 0,
+                },
+                "categorySpecificSummary": {},
+                "flaggedResources": [{"resourceId": "i-1", "status": "warning", "metadata": []}],
+            }
+        },
+        expected_params={"checkId": "c1"},
+    )
+
+    checks = cost.trusted_advisor_cost_checks(ctx)
+
+    # Only the cost_optimizing check is queried and reported; the security
+    # one is filtered out before any per-check result call.
+    assert len(checks) == 1
+    assert checks[0]["check"] == "Low Utilization Amazon EC2 Instances"
+    assert checks[0]["status"] == "warning"
+    assert len(checks[0]["flaggedResources"]) == 1
+    stub.assert_no_pending_responses()
+
+
+def test_trusted_advisor_returns_empty_without_support_plan(ctx):
+    """Basic/Developer support raises SubscriptionRequiredException -- a
+    normal state the collector degrades on, not an error."""
+    support_client, stub = install_stub(ctx, "support", region="us-east-1")
+    stub.add_client_error("describe_trusted_advisor_checks", service_error_code="SubscriptionRequiredException")
+
+    assert cost.trusted_advisor_cost_checks(ctx) == []

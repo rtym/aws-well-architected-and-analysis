@@ -25,3 +25,31 @@ def test_collect_region_containers_lists_ecs_cluster_and_service(ctx):
 def test_describe_eks_returns_empty_list_when_no_clusters(ctx):
     result = containers.describe_eks(ctx, "us-east-1")
     assert result == []
+
+
+@mock_aws
+def test_describe_eks_includes_nodegroups_and_fargate_profiles(ctx):
+    eks = boto3.client("eks", region_name="us-east-1")
+    eks.create_cluster(
+        name="k8s",
+        roleArn="arn:aws:iam::123456789012:role/eks",
+        resourcesVpcConfig={"subnetIds": []},
+    )
+    eks.create_nodegroup(
+        clusterName="k8s",
+        nodegroupName="workers",
+        subnets=["subnet-1"],
+        nodeRole="arn:aws:iam::123456789012:role/nodes",
+    )
+
+    clusters = containers.describe_eks(ctx, "us-east-1")
+
+    assert len(clusters) == 1
+    assert clusters[0]["name"] == "k8s"
+    assert [ng["nodegroupName"] for ng in clusters[0]["_Nodegroups"]] == ["workers"]
+    assert clusters[0]["_FargateProfiles"] == []
+
+
+@mock_aws
+def test_describe_ecs_returns_empty_list_when_no_clusters(ctx):
+    assert containers.describe_ecs(ctx, "us-east-1") == []
