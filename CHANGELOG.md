@@ -65,6 +65,12 @@ Notable changes to this plugin. Versions track `.claude-plugin/plugin.json`.
   broken relative Markdown link in the repo's docs. `make cov` runs the
   suite with the coverage report (`pytest-cov` added to dev
   requirements).
+- **A pull-request template** (`.github/PULL_REQUEST_TEMPLATE.md`) walking
+  the contributor through the repo's tested invariants (read-only rule,
+  escaping contract, degradation pattern, per-layer tests, changelog), and
+  **Dependabot** (`.github/dependabot.yml`) for weekly pip and GitHub
+  Actions updates, with minor/patch Python bumps grouped into one PR so
+  boto3's near-daily releases don't flood the repo.
 
 ## [1.1.3]
 
