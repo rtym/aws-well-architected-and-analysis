@@ -6,4 +6,4 @@ moto[ec2,ecs,eks,rds,s3,iam,sts,elbv2]>=5.0
 PyYAML>=6.0
 ruff>=0.17.3
 # For `make cov` -- line coverage over shared/ and skills/.
-pytest-cov>=5.0
+pytest-cov>=7.1.0
