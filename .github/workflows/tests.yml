@@ -41,8 +41,30 @@ jobs:
       - name: Byte-compile all Python sources
         run: python -m compileall -q shared skills
 
+      # No --maxfail: the dashboard below should list every failure in the
+      # run, not stop at the first one.
       - name: Run test suite
-        run: python -m pytest tests/ -v --maxfail=1
+        run: >
+          python -m pytest tests/ -v
+          --junitxml=junit.xml
+          --cov=shared --cov=skills --cov-report=xml
+
+      # Renders pass/fail counts, line coverage, the least-covered files,
+      # and full failure detail onto this run's summary page.
+      - name: Write the test dashboard to the run summary
+        if: always()
+        run: >
+          python .github/scripts/test_summary.py junit.xml coverage.xml
+          "Python ${{ matrix.python-version }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload raw test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-python-${{ matrix.python-version }}
+          path: |
+            junit.xml
+            coverage.xml
 
   lint:
     runs-on: ubuntu-latest

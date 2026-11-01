@@ -65,6 +65,14 @@ Notable changes to this plugin. Versions track `.claude-plugin/plugin.json`.
   broken relative Markdown link in the repo's docs. `make cov` runs the
   suite with the coverage report (`pytest-cov` added to dev
   requirements).
+- **A test dashboard on every CI run.** The test job now writes JUnit and
+  coverage XML, and `.github/scripts/test_summary.py` (stdlib-only,
+  unit-tested in `tests/test_ci_summary.py`) renders them onto the
+  workflow run's summary page: pass/fail/skip counts per Python version,
+  total line coverage with the least-covered files, and the full detail
+  of every failure (`--maxfail=1` dropped so a red run shows all of them,
+  not just the first). Raw XML is uploaded as a per-version artifact, and
+  the README carries the workflow status badge.
 - **A pull-request template** (`.github/PULL_REQUEST_TEMPLATE.md`) walking
   the contributor through the repo's tested invariants (read-only rule,
   escaping contract, degradation pattern, per-layer tests, changelog), and
