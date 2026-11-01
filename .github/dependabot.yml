@@ -1,0 +1,29 @@
+# Keeps the Python dependencies (requirements.txt / requirements-dev.txt)
+# and the GitHub Actions in tests.yml current. Every Dependabot PR runs the
+# full CI gate (lint, byte-compile, pytest on 3.11-3.13, script --help), so
+# a breaking bump fails visibly instead of landing silently.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    # One PR per batch of compatible bumps instead of one per package;
+    # boto3/botocore release almost daily and would otherwise flood the repo.
+    groups:
+      python-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: ci
