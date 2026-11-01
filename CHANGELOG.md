@@ -2,6 +2,17 @@
 
 Notable changes to this plugin. Versions track `.claude-plugin/plugin.json`.
 
+## [1.2.1]
+
+### Changed
+
+- **Dependency floors raised via Dependabot** (its first batch after being
+  enabled in 1.2.0, every bump merged through a pull request with the full
+  CI gate green). Runtime: botocore >=1.43.121, WeasyPrint >=70.0. Dev:
+  ruff >=0.17.3, pytest-cov >=7.1.0, moto >=5.2.5. CI actions: checkout,
+  setup-python and upload-artifact moved to their current major versions.
+  No functional changes to the collectors, reports, or skills.
+
 ## [1.2.0]
 
 ### Fixed
