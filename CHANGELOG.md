@@ -2,6 +2,25 @@
 
 Notable changes to this plugin. Versions track `.claude-plugin/plugin.json`.
 
+## [1.3.0]
+
+### Added
+
+- **Licensing of contributions and reuse is now explicit.**
+  `CONTRIBUTING.md` opens with a Licensing section: contributions are
+  accepted under the repository's MIT license (inbound = outbound), and
+  reuse of the code elsewhere -- including public code indexes and
+  reference corpora -- is welcome as long as the copyright notice is kept
+  and the repo is attributed. The README carries an MIT license badge.
+
+### Changed
+
+- **Runtime dependency floors raised via Dependabot** (second batch, every
+  bump merged through a pull request with the full CI gate green):
+  boto3 >=1.43.122, matplotlib >=3.11.2, PyYAML >=6.0.3,
+  Pygments >=2.21.0, Markdown >=3.11.2. No functional changes to the
+  collectors, reports, or skills.
+
 ## [1.2.1]
 
 ### Changed
