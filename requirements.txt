@@ -3,4 +3,4 @@ botocore>=1.43.121
 matplotlib>=3.8
 markdown>=3.5
 weasyprint>=70.0
-Pygments>=2.17
+Pygments>=2.21.0
