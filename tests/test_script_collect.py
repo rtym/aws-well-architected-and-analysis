@@ -99,21 +99,33 @@ def test_discover_collect_tolerates_account_id_failure(monkeypatch):
 def test_security_scan_collect_wires_global_and_regional_evidence(monkeypatch):
     monkeypatch.setattr(security_scan.security, "collect_global_security", _tag("global_security"))
     monkeypatch.setattr(security_scan.security, "collect_region_security", _tag("region_security"))
+    monkeypatch.setattr(security_scan.security, "account_public_access_block", _tag("account_bpa"))
     monkeypatch.setattr(security_scan.compute, "collect_region_compute", _tag("compute"))
     monkeypatch.setattr(security_scan.data_stores, "collect_global_data_stores", _tag("global_data_stores"))
+    monkeypatch.setattr(security_scan.data_stores, "describe_rds_instances", lambda ctx, region: [{"DBInstanceIdentifier": f"db-{region}"}])
+    monkeypatch.setattr(security_scan.data_stores, "describe_rds_snapshots", lambda ctx, region: [{"DBSnapshotIdentifier": f"snap-{region}"}])
+    monkeypatch.setattr(security_scan.data_stores, "rds_exposure", lambda instances: {"PubliclyAccessible": instances, "Unencrypted": []})
+    monkeypatch.setattr(security_scan.data_stores, "public_rds_snapshots", lambda ctx, region, snaps: [{"Public": snaps[0]["DBSnapshotIdentifier"]}])
     monkeypatch.setattr(security_scan.cloudtrail, "cloudtrail_posture", _tag("cloudtrail"))
     monkeypatch.setattr(security_scan.vpc, "describe_security_groups", lambda ctx, region: [{"GroupId": f"sg-{region}"}])
     monkeypatch.setattr(security_scan.vpc, "wide_open_security_groups", lambda sgs: [{"Open": sgs[0]["GroupId"]}])
+    monkeypatch.setattr(security_scan.vpc, "default_security_groups_with_rules", lambda sgs: [{"Default": sgs[0]["GroupId"]}])
 
     data = security_scan.collect(_Ctx(), ["us-east-1", "eu-west-1"])
 
     assert set(data["Regions"]) == {"us-east-1", "eu-west-1"}
+    # Both SG analyzers must see the same single describe_security_groups call.
     assert data["Regions"]["eu-west-1"]["WideOpenSecurityGroups"] == [{"Open": "sg-eu-west-1"}]
+    assert data["Regions"]["eu-west-1"]["DefaultSecurityGroupsWithRules"] == [{"Default": "sg-eu-west-1"}]
     assert data["Regions"]["eu-west-1"]["Security"]["args"] == ("eu-west-1",)
+    # RDS exposure is derived from that region's own instance/snapshot lists.
+    assert data["Regions"]["eu-west-1"]["RdsExposure"]["PubliclyAccessible"] == [{"DBInstanceIdentifier": "db-eu-west-1"}]
+    assert data["Regions"]["eu-west-1"]["PublicRdsSnapshots"] == [{"Public": "snap-eu-west-1"}]
     assert data["Global"]["collector"] == "global_security"
     # CloudTrail trails are account-wide: exactly one call, from the first region.
     assert data["Global"]["CloudTrail"]["args"] == ("us-east-1",)
     assert data["Global"]["DataStores"]["collector"] == "global_data_stores"
+    assert data["Global"]["AccountPublicAccessBlock"]["collector"] == "account_bpa"
 
 
 def test_analyze_cost_collect_queries_compute_optimizer_and_idle_per_region(monkeypatch):

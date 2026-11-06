@@ -64,3 +64,31 @@ percentage typically means:
 A standard being *enabled* with a low *control-pass* percentage is a
 different finding from a standard not being *enabled* at all -- state
 which one you're reporting.
+
+## Control IDs for the deterministic checks
+
+The scan's own deterministic checks (run directly against the APIs, not
+via Security Hub) each correspond to a Security Hub control -- cite the ID
+so the writeup is audit-ready even when Security Hub itself is off.
+Verified against the Security Hub controls documentation on 2026-11-06,
+except IAM.3's exact wording (older source; the 90-day threshold is also
+CIS's):
+
+| Report section / finding               | Control | Suggested severity |
+| -------------------------------------- | ------- | ------------------ |
+| Publicly restorable EBS snapshot       | EC2.1   | CRITICAL           |
+| Default security group with rules      | EC2.2   | LOW (MEDIUM if instances use it) |
+| Unencrypted EBS volume                 | EC2.3   | MEDIUM             |
+| EBS encryption-by-default off          | EC2.7   | MEDIUM             |
+| Instance allowing IMDSv1               | EC2.8   | HIGH               |
+| Publicly shared RDS snapshot           | RDS.1   | CRITICAL           |
+| Publicly accessible RDS instance       | RDS.2   | CRITICAL           |
+| RDS storage not encrypted              | RDS.3   | MEDIUM             |
+| Account-level Block Public Access off  | S3.1    | MEDIUM (HIGH with public buckets present) |
+| KMS key rotation disabled              | KMS.4   | MEDIUM             |
+| Access key older than 90 days          | IAM.3   | MEDIUM             |
+| Lambda URL with auth type NONE         | --      | HIGH (no stable control ID; the public resource policy behind it is flagged by Lambda.1) |
+
+A publicly restorable snapshot (EBS or RDS) is a complete, out-of-band
+copy of the data: treat it at the same severity as a public S3 bucket
+even though no "breach" has been observed.

@@ -1,22 +1,26 @@
 ---
 name: aws-security-review
 description: >
-  Verify AWS security posture and find gaps: GuardDuty and Security Hub
-  enablement + active findings, Security Hub standards compliance (CIS AWS
-  Foundations, AWS Foundational Security Best Practices, PCI DSS), IAM
-  Access Analyzer findings, AWS Config rule compliance and whether the
-  Config recorder is even running, CloudTrail posture (multi-region trail,
-  actively logging, log file validation), IAM hygiene (MFA, stale access
-  keys, root account risk, password policy), public/unencrypted S3
-  buckets, security groups open to 0.0.0.0/0 or ::/0, EC2 instances not
-  enforcing IMDSv2, load balancer listeners without TLS, and ACM
-  certificates expired or expiring within 30 days -- then produce a
-  severity-ranked Markdown/HTML/PDF security report with charts. Use this
-  skill when someone asks for a "security review", "security posture
-  assessment", "check GuardDuty", "check Security Hub", "find security
-  gaps", "IAM audit", "is this account secure", "security
-  recommendations", "check CloudTrail", "check IMDSv2", or "compliance
-  check" (CIS/PCI/FSBP).
+  Verify AWS security posture and find gaps: GuardDuty, Security Hub,
+  Inspector, and Macie enablement + active findings, Security Hub
+  standards compliance (CIS AWS Foundations, AWS Foundational Security
+  Best Practices, PCI DSS), IAM Access Analyzer findings, AWS Config rule
+  compliance and whether the Config recorder is even running, CloudTrail
+  posture (multi-region trail, actively logging, log file validation),
+  IAM hygiene (MFA, access keys older than 90 days, root account risk,
+  password policy), public/unencrypted S3 buckets and the account-level
+  Block Public Access backstop, security groups open to 0.0.0.0/0 or ::/0
+  and default security groups with rules, EBS encryption-by-default and
+  publicly restorable EBS/RDS snapshots, publicly accessible or
+  unencrypted RDS instances, customer-managed KMS keys without rotation,
+  Lambda function URLs without auth, EC2 instances not enforcing IMDSv2,
+  load balancer listeners without TLS, and ACM certificates expired or
+  expiring within 30 days -- then produce a severity-ranked
+  Markdown/HTML/PDF security report with charts. Use this skill when
+  someone asks for a "security review", "security posture assessment",
+  "check GuardDuty", "check Security Hub", "find security gaps", "IAM
+  audit", "is this account secure", "security recommendations", "check
+  CloudTrail", "check IMDSv2", or "compliance check" (CIS/PCI/FSBP).
 ---
 
 # AWS Security Review
@@ -63,13 +67,19 @@ and HTML reports are already written -- rerun with `--formats md,html` or
 tell the user how to enable PDF.
 
 This produces: CloudTrail posture (multi-region trail, logging, log file
-validation), IAM hygiene summary, S3 exposure, per-region GuardDuty/
-Security Hub/Config-recorder enablement + finding counts, a severity-
-distribution chart, the actual findings tables, Security Hub standards
-coverage percentages, non-compliant Config rules, Access Analyzer active
-findings, every security group rule open to the world, EC2 instances not
-enforcing IMDSv2, load balancer listeners without TLS, and ACM
-certificates expired or expiring within 30 days.
+validation), IAM hygiene summary, S3 exposure (per bucket plus the
+account-level Block Public Access backstop), per-region GuardDuty/
+Security Hub/Inspector/Macie/Config-recorder enablement + finding counts,
+a severity-distribution chart, the actual findings tables, Security Hub
+standards coverage percentages, non-compliant Config rules, Access
+Analyzer active findings, every security group rule open to the world,
+default security groups that allow traffic, an encryption-posture table
+(EBS encryption-by-default, unencrypted volumes, publicly restorable
+snapshots, KMS keys without rotation), RDS exposure (publicly accessible
+or unencrypted instances, publicly shared snapshots), Lambda function
+URLs without authentication, EC2 instances not enforcing IMDSv2, load
+balancer listeners without TLS, and ACM certificates expired or expiring
+within 30 days.
 
 ### Step 2 -- Triage before reporting
 
@@ -84,8 +94,12 @@ Not every returned finding is equally worth the user's attention. Prioritize:
 3. **Root account or MFA gaps** -- these are foundational; a single root
    access key or an admin console user without MFA outweighs a long tail
    of low-severity findings.
-4. **Public/unencrypted S3 and wide-open security groups** -- concrete,
-   fixable-today items; name the exact bucket/security-group ID.
+4. **Direct public exposure** -- public/unencrypted S3, wide-open security
+   groups, publicly restorable EBS/RDS snapshots, publicly accessible RDS
+   instances, and Lambda URLs without auth are concrete, fixable-today
+   items; name the exact bucket/group/snapshot/function ID. A publicly
+   shared snapshot is an unnoticed full copy of the data -- treat it at
+   the same severity as a public bucket.
 
 ### Step 3 -- Map to standards, don't just count findings
 

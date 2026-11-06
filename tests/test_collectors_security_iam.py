@@ -67,10 +67,11 @@ def test_iam_findings_flags_root_mfa_and_root_access_key():
     assert "root account has no MFA" in findings["RootAccountRisks"]
     assert "root account has an active access key" in findings["RootAccountRisks"]
     assert findings["PasswordPolicySet"] is True
-    # The root user's active key is also tracked for rotation review.
-    assert findings["AccessKeysToReview"] == [
-        {"user": "<root_account>", "key": "1", "last_rotated": "2020-01-01T00:00:00+00:00"}
-    ]
+    # The root user's years-old active key is also tracked for rotation review.
+    (key_row,) = findings["AccessKeysToReview"]
+    assert key_row["user"] == "<root_account>"
+    assert key_row["key"] == "1"
+    assert key_row["age_days"] > 90
 
 
 def test_iam_findings_clean_root_reports_no_risks():
@@ -95,6 +96,34 @@ def test_iam_findings_never_rotated_key_is_not_listed_for_review():
         {"user": "ci", "access_key_1_active": "true", "access_key_1_last_rotated": "N/A"}
     ]
     assert security.iam_findings(report, None)["AccessKeysToReview"] == []
+
+
+def test_iam_findings_fresh_key_is_not_listed_for_review():
+    """FSBP IAM.3 sets the threshold at 90 days. Pre-threshold, the report
+    listed every active key, which buried genuinely stale ones."""
+    from datetime import datetime, timedelta, timezone
+
+    fresh = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+    old = (datetime.now(timezone.utc) - timedelta(days=120)).isoformat()
+    report = [
+        {"user": "fresh", "access_key_1_active": "true", "access_key_1_last_rotated": fresh},
+        {"user": "stale", "access_key_1_active": "true", "access_key_1_last_rotated": old},
+    ]
+    findings = security.iam_findings(report, None)
+    assert [k["user"] for k in findings["AccessKeysToReview"]] == ["stale"]
+    assert 119 <= findings["AccessKeysToReview"][0]["age_days"] <= 121
+
+
+def test_iam_findings_unparseable_rotation_date_is_listed():
+    """"no_information" is not proof of freshness -- surface the key with an
+    unknown age rather than silently dropping it."""
+    report = [
+        {"user": "mystery", "access_key_2_active": "true", "access_key_2_last_rotated": "no_information"}
+    ]
+    findings = security.iam_findings(report, None)
+    assert findings["AccessKeysToReview"] == [
+        {"user": "mystery", "key": "2", "last_rotated": "no_information", "age_days": None}
+    ]
 
 
 @mock_aws

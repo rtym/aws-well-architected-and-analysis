@@ -97,6 +97,28 @@ def wide_open_security_groups(security_groups: list[dict]) -> list[dict]:
     return findings
 
 
+def default_security_groups_with_rules(security_groups: list[dict]) -> list[dict]:
+    """VPC default security groups that allow any traffic (FSBP EC2.2):
+    the default group should have no rules at all, so nothing launched
+    without an explicit group assignment can communicate."""
+    findings = []
+    for sg in security_groups:
+        if sg.get("GroupName") != "default":
+            continue
+        ingress = sg.get("IpPermissions", [])
+        egress = sg.get("IpPermissionsEgress", [])
+        if ingress or egress:
+            findings.append(
+                {
+                    "GroupId": sg["GroupId"],
+                    "VpcId": sg.get("VpcId"),
+                    "IngressRules": len(ingress),
+                    "EgressRules": len(egress),
+                }
+            )
+    return findings
+
+
 def collect_region_network(ctx: AwsContext, region: str) -> dict:
     """Full network inventory for one region."""
     security_groups = describe_security_groups(ctx, region)
