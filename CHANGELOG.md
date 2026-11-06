@@ -2,6 +2,51 @@
 
 Notable changes to this plugin. Versions track `.claude-plugin/plugin.json`.
 
+## [1.4.0]
+
+### Added
+
+- **The security review checks nine more exposure and encryption gaps**,
+  each mapped to its Security Hub control ID in
+  `skills/aws-security-review/references/severity-and-standards.md`:
+  publicly restorable EBS snapshots (EC2.1), default security groups that
+  allow traffic (EC2.2), unencrypted EBS volumes (EC2.3), EBS
+  encryption-by-default off per region (EC2.7), publicly shared RDS
+  snapshots (RDS.1), publicly accessible RDS instances (RDS.2),
+  unencrypted RDS storage (RDS.3), the account-level S3 Block Public
+  Access backstop (S3.1), customer-managed KMS keys with rotation off
+  (KMS.4), and Lambda function URLs with auth type NONE. The report gains
+  Encryption Posture, RDS Exposure, Lambda Function URLs Without
+  Authentication, and Default Security Groups Allowing Traffic sections.
+- **Inspector and Macie enablement** now appear beside GuardDuty,
+  Security Hub, and the Config recorder in the Regional Coverage table,
+  so all five detection services are confirmed per region.
+- `PERMISSIONS.md` least-privilege policy gained the matching actions:
+  `ec2:GetEbsEncryptionByDefault`, `inspector2:BatchGetAccountStatus`,
+  `macie2:GetMacieSession`, `kms:ListKeys`, `kms:DescribeKey`,
+  `kms:GetKeyRotationStatus`, `s3:GetAccountPublicAccessBlock`.
+- 22 new tests cover every added check (moto where it implements the API,
+  `botocore.stub.Stubber` where it doesn't -- moto ignores
+  `describe_snapshots` server-side filters, so that contract is pinned
+  with a stub). Suite grows 435 -> 457; the changed collector modules sit
+  at 100% line coverage.
+
+### Changed
+
+- **IAM access-key findings now apply the 90-day rotation threshold**
+  (FSBP IAM.3). Previously every active key with a rotation date was
+  listed under "access keys to review", which buried the stale ones; now
+  only keys older than 90 days (or with an unparseable rotation date) are
+  reported, with their age in days.
+
+### Verified
+
+- The Well-Architected pillar references were re-checked against AWS's
+  announcements: the April 2025 framework refresh (which 1.2.0 already
+  incorporated) is still the current core framework; AWS's November 2025
+  Well-Architected additions are new AI/ML *lenses*, which sit outside
+  the six-pillar core framework this plugin reviews against.
+
 ## [1.3.0]
 
 ### Added

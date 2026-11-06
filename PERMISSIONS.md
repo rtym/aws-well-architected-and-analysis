@@ -41,6 +41,7 @@ customer-managed policy:
       "Effect": "Allow",
       "Action": [
         "ec2:Describe*",
+        "ec2:GetEbsEncryptionByDefault",
         "elasticloadbalancing:Describe*",
         "autoscaling:Describe*",
         "ecs:List*",
@@ -105,7 +106,13 @@ customer-managed policy:
         "accessanalyzer:ListFindings",
         "config:DescribeComplianceByConfigRule",
         "config:DescribeConfigurationRecorders",
-        "config:DescribeConfigurationRecorderStatus"
+        "config:DescribeConfigurationRecorderStatus",
+        "inspector2:BatchGetAccountStatus",
+        "macie2:GetMacieSession",
+        "kms:ListKeys",
+        "kms:DescribeKey",
+        "kms:GetKeyRotationStatus",
+        "s3:GetAccountPublicAccessBlock"
       ],
       "Resource": "*"
     },

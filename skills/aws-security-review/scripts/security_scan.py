@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Assess AWS security posture: GuardDuty and Security Hub enablement +
-findings, Security Hub standards (CIS/FSBP/PCI) control pass rates, IAM
-Access Analyzer findings, AWS Config rule compliance, IAM hygiene (MFA,
-stale keys, root account, password policy), and public/unencrypted S3
-buckets and wide-open security groups -- then render a severity-ranked
-Markdown/HTML/PDF report with charts.
+"""Assess AWS security posture: GuardDuty, Security Hub, Inspector, and
+Macie enablement + findings, Security Hub standards (CIS/FSBP/PCI) control
+pass rates, IAM Access Analyzer findings, AWS Config rule compliance, IAM
+hygiene (MFA, key age, root account, password policy), public/unencrypted
+S3 buckets plus the account-level Block Public Access backstop, wide-open
+and default security groups, EBS/RDS encryption and public-snapshot
+exposure, KMS rotation, and Lambda function URLs without auth -- then
+render a severity-ranked Markdown/HTML/PDF report with charts.
 
 Read-only. Every call is a Describe/List/Get; nothing here changes a
 security control or remediates a finding.
@@ -36,13 +38,18 @@ def parse_args(argv=None) -> argparse.Namespace:
 def collect(ctx, regions: list[str]) -> dict:
     data = {"Regions": {}, "Global": security.collect_global_security(ctx)}
     for region in regions:
-        compute_data = compute.collect_region_compute(ctx, region)
+        security_groups = vpc.describe_security_groups(ctx, region)
+        rds_snapshots = data_stores.describe_rds_snapshots(ctx, region)
         data["Regions"][region] = {
             "Security": security.collect_region_security(ctx, region),
-            "WideOpenSecurityGroups": vpc.wide_open_security_groups(vpc.describe_security_groups(ctx, region)),
-            "Compute": compute_data,
+            "WideOpenSecurityGroups": vpc.wide_open_security_groups(security_groups),
+            "DefaultSecurityGroupsWithRules": vpc.default_security_groups_with_rules(security_groups),
+            "Compute": compute.collect_region_compute(ctx, region),
+            "RdsExposure": data_stores.rds_exposure(data_stores.describe_rds_instances(ctx, region)),
+            "PublicRdsSnapshots": data_stores.public_rds_snapshots(ctx, region, rds_snapshots),
         }
     data["Global"]["DataStores"] = data_stores.collect_global_data_stores(ctx)
+    data["Global"]["AccountPublicAccessBlock"] = security.account_public_access_block(ctx)
     # CloudTrail trails are visible account-wide from one region call.
     data["Global"]["CloudTrail"] = cloudtrail.cloudtrail_posture(ctx, regions[0])
     return data
@@ -75,7 +82,8 @@ def build_report(data: dict) -> Report:
             f"This report assesses the security posture of one AWS account "
             f"across region(s) {regions}: whether the core detection "
             "services are on, what they found, and the concrete exposure "
-            "items (open security groups, public or unencrypted S3 buckets, "
+            "items (open security groups, public or unencrypted S3 buckets "
+            "and snapshots, publicly reachable databases and Lambda URLs, "
             "listeners without TLS). Start with Regional Coverage to see "
             "which detection services are enabled where, then work down the "
             "findings tables in severity order."
@@ -94,20 +102,32 @@ def build_report(data: dict) -> Report:
     iam_findings = data["Global"]["IamFindings"]
     iam_lines = [
         f"- **Console users without MFA:** {len(iam_findings['ConsoleUsersWithoutMfa'])}",
-        f"- **Access keys to review (active, rotation age tracked):** {len(iam_findings['AccessKeysToReview'])}",
+        f"- **Active access keys older than 90 days:** {len(iam_findings['AccessKeysToReview'])}",
         f"- **Root account risks:** {', '.join(iam_findings['RootAccountRisks']) or 'none detected'}",
         f"- **Account password policy set:** {'yes' if iam_findings['PasswordPolicySet'] else 'no'}",
     ]
     report.add_section("IAM Hygiene", "\n".join(iam_lines))
+
+    account_bpa = data["Global"].get("AccountPublicAccessBlock")
+    if account_bpa is None:
+        bpa_line = "NOT configured -- gap (per-bucket settings are the only guard)"
+    elif all(
+        account_bpa.get(k, False)
+        for k in ("BlockPublicAcls", "IgnorePublicAcls", "BlockPublicPolicy", "RestrictPublicBuckets")
+    ):
+        bpa_line = "all four settings enabled"
+    else:
+        bpa_line = "partially enabled -- gap"
+    s3_intro = f"- **Account-level S3 Block Public Access:** {bpa_line}\n\n"
 
     public_buckets = data["Global"]["DataStores"]["PubliclyAccessibleBuckets"]
     unencrypted_buckets = data["Global"]["DataStores"]["UnencryptedBuckets"]
     s3_rows = [{"Bucket": b["Name"], "Issue": "Public access not fully blocked"} for b in public_buckets]
     s3_rows += [{"Bucket": b["Name"], "Issue": "No default encryption configured"} for b in unencrypted_buckets]
     if s3_rows:
-        report.add_section("S3 Exposure", findings_table(s3_rows, ["Bucket", "Issue"]))
+        report.add_section("S3 Exposure", s3_intro + findings_table(s3_rows, ["Bucket", "Issue"]))
     else:
-        report.add_section("S3 Exposure", "No publicly-exposed or unencrypted S3 buckets detected.")
+        report.add_section("S3 Exposure", s3_intro + "No publicly-exposed or unencrypted S3 buckets detected.")
 
     severity_counts = {s: 0 for s in SEVERITY_ORDER}
     per_region_rows = []
@@ -139,6 +159,8 @@ def build_report(data: dict) -> Report:
                 "Region": region,
                 "GuardDuty": "enabled" if gd["Enabled"] else "NOT enabled",
                 "Security Hub": "enabled" if sh.get("Enabled") else "NOT enabled",
+                "Inspector": "enabled" if sec.get("Inspector2", {}).get("Enabled") else "NOT enabled",
+                "Macie": "enabled" if sec.get("Macie", {}).get("Enabled") else "NOT enabled",
                 "Config recorder": "recording" if config_recorder.get("Recording") else "NOT recording",
                 "GuardDuty findings": len(gd_findings),
                 "Security Hub findings": len(sh_findings),
@@ -148,7 +170,7 @@ def build_report(data: dict) -> Report:
 
     report.add_section("Regional Coverage", findings_table(
         per_region_rows,
-        ["Region", "GuardDuty", "Security Hub", "Config recorder", "GuardDuty findings", "Security Hub findings", "Open security groups"],
+        ["Region", "GuardDuty", "Security Hub", "Inspector", "Macie", "Config recorder", "GuardDuty findings", "Security Hub findings", "Open security groups"],
     ))
 
     non_zero = {k: v for k, v in severity_counts.items() if v}
@@ -220,6 +242,94 @@ def build_report(data: dict) -> Report:
                     }
                 )
         report.add_section("Wide-Open Security Group Rules", findings_table(sg_rows, ["Region", "Group", "Port range", "Protocol", "Open to"]))
+
+    encryption_rows = []
+    public_ebs_rows = []
+    kms_rows = []
+    for region, region_data in data["Regions"].items():
+        sec = region_data["Security"]
+        by_default = sec.get("EbsEncryptionByDefault")
+        unencrypted_vols = sec.get("UnencryptedEbsVolumes", [])
+        public_snaps = sec.get("PublicEbsSnapshots", [])
+        kms_keys = sec.get("KmsKeysWithoutRotation", [])
+        encryption_rows.append(
+            {
+                "Region": region,
+                "EBS encryption by default": {True: "on", False: "OFF -- gap"}.get(by_default, "unknown"),
+                "Unencrypted EBS volumes": len(unencrypted_vols),
+                "Public EBS snapshots": len(public_snaps),
+                "KMS keys without rotation": len(kms_keys),
+            }
+        )
+        for s in public_snaps:
+            public_ebs_rows.append({"Region": region, "Snapshot": s.get("SnapshotId"), "Volume": s.get("VolumeId")})
+        for k in kms_keys:
+            kms_rows.append({"Region": region, "Key": k.get("KeyId"), "Description": k.get("Description", "")})
+
+    encryption_body = (
+        "Encryption-at-rest posture per region. \"EBS encryption by default\" "
+        "is the regional switch that encrypts every new volume automatically; "
+        "a public snapshot is restorable by any AWS account.\n\n"
+        + findings_table(
+            encryption_rows,
+            ["Region", "EBS encryption by default", "Unencrypted EBS volumes", "Public EBS snapshots", "KMS keys without rotation"],
+        )
+    )
+    if public_ebs_rows:
+        encryption_body += "\n\n**Publicly restorable EBS snapshots:**\n\n" + findings_table(
+            public_ebs_rows, ["Region", "Snapshot", "Volume"]
+        )
+    if kms_rows:
+        encryption_body += (
+            "\n\n**Customer-managed KMS keys with automatic rotation off:**\n\n"
+            + findings_table(kms_rows, ["Region", "Key", "Description"])
+        )
+    report.add_section("Encryption Posture (EBS and KMS)", encryption_body)
+
+    rds_rows = []
+    for region, region_data in data["Regions"].items():
+        exposure = region_data.get("RdsExposure", {})
+        for i in exposure.get("PubliclyAccessible", []):
+            rds_rows.append({"Region": region, "Instance": i.get("DBInstanceIdentifier"), "Engine": i.get("Engine"), "Issue": "Publicly accessible"})
+        for i in exposure.get("Unencrypted", []):
+            rds_rows.append({"Region": region, "Instance": i.get("DBInstanceIdentifier"), "Engine": i.get("Engine"), "Issue": "Storage not encrypted"})
+        for s in region_data.get("PublicRdsSnapshots", []):
+            rds_rows.append({"Region": region, "Instance": s.get("DBSnapshotIdentifier"), "Engine": s.get("Engine"), "Issue": "Snapshot shared publicly"})
+    if rds_rows:
+        report.add_section("RDS Exposure", findings_table(rds_rows, ["Region", "Instance", "Engine", "Issue"]))
+
+    lambda_url_rows = []
+    for region, region_data in data["Regions"].items():
+        for f in region_data["Security"].get("LambdaUrlsWithoutAuth", []):
+            lambda_url_rows.append({"Region": region, "Function": f.get("FunctionName"), "URL": f.get("FunctionUrl")})
+    if lambda_url_rows:
+        report.add_section(
+            "Lambda Function URLs Without Authentication",
+            "Function URLs with auth type NONE accept unsigned requests from "
+            "anyone on the internet:\n\n"
+            + findings_table(lambda_url_rows, ["Region", "Function", "URL"]),
+        )
+
+    default_sg_rows = []
+    for region, region_data in data["Regions"].items():
+        for sg in region_data.get("DefaultSecurityGroupsWithRules", []):
+            default_sg_rows.append(
+                {
+                    "Region": region,
+                    "Group": sg.get("GroupId"),
+                    "VPC": sg.get("VpcId"),
+                    "Ingress rules": sg.get("IngressRules"),
+                    "Egress rules": sg.get("EgressRules"),
+                }
+            )
+    if default_sg_rows:
+        report.add_section(
+            "Default Security Groups Allowing Traffic",
+            "A VPC's default security group should have no rules, so a "
+            "resource launched without an explicit group gets no network "
+            "access by accident:\n\n"
+            + findings_table(default_sg_rows, ["Region", "Group", "VPC", "Ingress rules", "Egress rules"]),
+        )
 
     imdsv1_rows = []
     plaintext_rows = []

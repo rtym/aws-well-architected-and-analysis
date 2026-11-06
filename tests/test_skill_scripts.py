@@ -449,6 +449,7 @@ def test_security_scan_build_report_flags_open_sg_and_standards():
         "Global": {
             "IamFindings": {"ConsoleUsersWithoutMfa": ["alice"], "AccessKeysToReview": [], "RootAccountRisks": [], "PasswordPolicySet": True},
             "DataStores": {"PubliclyAccessibleBuckets": [{"Name": "open"}], "UnencryptedBuckets": []},
+            "AccountPublicAccessBlock": {"BlockPublicAcls": True, "IgnorePublicAcls": True, "BlockPublicPolicy": False, "RestrictPublicBuckets": True},
             "CloudTrail": {"Trails": [], "HasMultiRegionTrail": False, "HasLoggingTrail": False, "HasLogFileValidation": False},
         },
         "Regions": {
@@ -456,6 +457,8 @@ def test_security_scan_build_report_flags_open_sg_and_standards():
                 "Security": {
                     "GuardDuty": {"Enabled": True, "DetectorIds": ["d1"]},
                     "SecurityHub": {"Enabled": True},
+                    "Inspector2": {"Enabled": True, "Status": "ENABLED"},
+                    "Macie": {"Enabled": False, "Status": None},
                     "GuardDutyFindings": [{"Type": "Recon:EC2/PortProbeUnprotectedPort", "Severity": 5.0}],
                     "SecurityHubFindings": [{"Severity": {"Label": "HIGH"}, "Title": "Exposed bucket", "Resources": [{"Id": "arn:aws:s3:::open"}]}],
                     "SecurityHubStandardsSummary": [
@@ -464,8 +467,19 @@ def test_security_scan_build_report_flags_open_sg_and_standards():
                     "AccessAnalyzerFindings": [{"resourceType": "AWS::S3::Bucket", "status": "ACTIVE"}],
                     "ConfigRuleCompliance": [{"ConfigRuleName": "s3-public-read-prohibited", "Compliance": {"ComplianceType": "NON_COMPLIANT"}}],
                     "ConfigRecorder": {"Recording": False},
+                    "EbsEncryptionByDefault": False,
+                    "UnencryptedEbsVolumes": [{"VolumeId": "vol-1", "State": "in-use", "SizeGiB": 100}],
+                    "PublicEbsSnapshots": [{"SnapshotId": "snap-1", "VolumeId": "vol-1"}],
+                    "KmsKeysWithoutRotation": [{"KeyId": "1234abcd-key", "Description": "app key"}],
+                    "LambdaUrlsWithoutAuth": [{"FunctionName": "webhook", "FunctionUrl": "https://abc.lambda-url.us-east-1.on.aws/"}],
                 },
                 "WideOpenSecurityGroups": [{"GroupId": "sg-1", "FromPort": 22, "ToPort": 22, "IpProtocol": "tcp", "OpenRanges": ["0.0.0.0/0"]}],
+                "DefaultSecurityGroupsWithRules": [{"GroupId": "sg-def", "VpcId": "vpc-1", "IngressRules": 1, "EgressRules": 1}],
+                "RdsExposure": {
+                    "PubliclyAccessible": [{"DBInstanceIdentifier": "db-pub", "Engine": "postgres"}],
+                    "Unencrypted": [{"DBInstanceIdentifier": "db-plain", "Engine": "mysql"}],
+                },
+                "PublicRdsSnapshots": [{"DBSnapshotIdentifier": "db-snap-shared", "Engine": "postgres"}],
                 "Compute": {
                     "InstancesAllowingImdsv1": [{"InstanceId": "i-1", "State": {"Name": "running"}}],
                     "PlaintextListeners": [{"LoadBalancerName": "web", "Port": 80, "Protocol": "HTTP"}],
@@ -482,6 +496,63 @@ def test_security_scan_build_report_flags_open_sg_and_standards():
     assert "NOT recording" in md
     assert "IMDSv2" in md
     assert "i-1" in md
+    # The FSBP-aligned exposure checks added in 1.4.0:
+    assert "partially enabled -- gap" in md          # account-level BPA
+    assert "Inspector" in md and "Macie" in md       # coverage columns
+    assert "OFF -- gap" in md                        # EBS encryption by default
+    assert "snap-1" in md                            # public EBS snapshot
+    assert "1234abcd-key" in md                      # KMS key without rotation
+    assert "db-pub" in md and "Publicly accessible" in md
+    assert "db-plain" in md and "Storage not encrypted" in md
+    assert "db-snap-shared" in md and "Snapshot shared publicly" in md
+    assert "webhook" in md and "Without Authentication" in md
+    assert "sg-def" in md and "Default Security Groups" in md
+    assert "Active access keys older than 90 days" in md
+
+
+def test_security_scan_clean_account_omits_conditional_exposure_sections():
+    """A clean account must not get empty RDS/Lambda/default-SG sections --
+    only the always-present posture tables."""
+    data = {
+        "Global": {
+            "IamFindings": {"ConsoleUsersWithoutMfa": [], "AccessKeysToReview": [], "RootAccountRisks": [], "PasswordPolicySet": True},
+            "DataStores": {"PubliclyAccessibleBuckets": [], "UnencryptedBuckets": []},
+            "AccountPublicAccessBlock": {"BlockPublicAcls": True, "IgnorePublicAcls": True, "BlockPublicPolicy": True, "RestrictPublicBuckets": True},
+            "CloudTrail": {"Trails": [{"Name": "t"}], "HasMultiRegionTrail": True, "HasLoggingTrail": True, "HasLogFileValidation": True},
+        },
+        "Regions": {
+            "us-east-1": {
+                "Security": {
+                    "GuardDuty": {"Enabled": True, "DetectorIds": ["d1"]},
+                    "SecurityHub": {"Enabled": True},
+                    "Inspector2": {"Enabled": True, "Status": "ENABLED"},
+                    "Macie": {"Enabled": True, "Status": "ENABLED"},
+                    "GuardDutyFindings": [],
+                    "SecurityHubFindings": [],
+                    "SecurityHubStandardsSummary": [],
+                    "AccessAnalyzerFindings": [],
+                    "ConfigRuleCompliance": [],
+                    "ConfigRecorder": {"Recording": True},
+                    "EbsEncryptionByDefault": True,
+                    "UnencryptedEbsVolumes": [],
+                    "PublicEbsSnapshots": [],
+                    "KmsKeysWithoutRotation": [],
+                    "LambdaUrlsWithoutAuth": [],
+                },
+                "WideOpenSecurityGroups": [],
+                "DefaultSecurityGroupsWithRules": [],
+                "RdsExposure": {"PubliclyAccessible": [], "Unencrypted": []},
+                "PublicRdsSnapshots": [],
+                "Compute": {"InstancesAllowingImdsv1": [], "PlaintextListeners": [], "ExpiringCertificates": []},
+            }
+        },
+    }
+    md = _assert_renders(security_scan.build_report(data))
+    assert "all four settings enabled" in md
+    assert "Encryption Posture" in md       # posture table always present
+    assert "RDS Exposure" not in md
+    assert "Without Authentication" not in md
+    assert "Default Security Groups Allowing Traffic" not in md
 
 
 def test_standard_name_parses_ruleset_arn():

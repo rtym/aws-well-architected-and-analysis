@@ -122,6 +122,43 @@ def unencrypted_buckets(buckets: list[dict]) -> list[dict]:
     return [{"Name": b["Name"]} for b in buckets if not b.get("_Encryption")]
 
 
+def rds_exposure(instances: list[dict]) -> dict:
+    """RDS instances reachable from the internet (FSBP RDS.2) or storing
+    data unencrypted (FSBP RDS.3), from already-collected describe output."""
+    public = [
+        {"DBInstanceIdentifier": i.get("DBInstanceIdentifier"), "Engine": i.get("Engine")}
+        for i in instances
+        if i.get("PubliclyAccessible")
+    ]
+    unencrypted = [
+        {"DBInstanceIdentifier": i.get("DBInstanceIdentifier"), "Engine": i.get("Engine")}
+        for i in instances
+        if not i.get("StorageEncrypted")
+    ]
+    return {"PubliclyAccessible": public, "Unencrypted": unencrypted}
+
+
+@ignore_access_denied(default=list)
+def public_rds_snapshots(ctx: AwsContext, region: str, snapshots: list[dict]) -> list[dict]:
+    """Manual RDS snapshots shared with "all" -- publicly restorable by any
+    AWS account (FSBP RDS.1). Takes the describe_rds_snapshots output so the
+    snapshot list is fetched once per region."""
+    rds = ctx.client("rds", region=region)
+    flagged = []
+    for snap in snapshots:
+        ident = snap.get("DBSnapshotIdentifier")
+        if not ident:
+            continue
+        attrs = rds.describe_db_snapshot_attributes(DBSnapshotIdentifier=ident)[
+            "DBSnapshotAttributesResult"
+        ].get("DBSnapshotAttributes", [])
+        for attr in attrs:
+            if attr.get("AttributeName") == "restore" and "all" in attr.get("AttributeValues", []):
+                flagged.append({"DBSnapshotIdentifier": ident, "Engine": snap.get("Engine")})
+                break
+    return flagged
+
+
 def collect_region_data_stores(ctx: AwsContext, region: str) -> dict:
     return {
         "Region": region,
