@@ -65,7 +65,15 @@ fails (WeasyPrint needs Pango: `brew install pango` on macOS), the Markdown
 and HTML reports are already written -- rerun with `--formats md,html` or
 tell the user how to enable PDF.
 
-This produces: AWS Backup plan/vault/cross-region-copy coverage, an RDS
+The report opens with a DR readiness score and seven readiness checks
+(backup plan, protected resources, cross-region copy, failed jobs, RDS
+Multi-AZ for instances and clusters, Route 53 health checks), each mapped
+to the Reliability question it informs, with an ordered fix list. A
+passing check means the mechanism exists, not that it meets the RTO/RPO:
+keep that distinction in anything you write. Checks that don't apply (no
+RDS, no hosted zone) show NO DATA and don't count toward the score.
+
+Below that it shows AWS Backup plan/vault/cross-region-copy coverage, an RDS
 DR-signal chart (single-AZ instances and clusters vs. read-replicas vs.
 cross-region/global clusters), S3 replication status, and Route 53 health
 check inventory. Aurora and Multi-AZ DB cluster members are judged at the

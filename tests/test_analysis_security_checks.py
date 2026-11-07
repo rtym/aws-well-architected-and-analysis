@@ -379,3 +379,14 @@ def test_analyze_bundles_everything_the_report_needs():
     out = sc.analyze(clean_bundle(), guardduty_severity_label)
     assert set(out) == {"results", "paths", "threats", "actions", "score"}
     assert out["score"].score == 100 and out["actions"] == [] and out["paths"] == []
+
+
+def test_region_with_missing_or_null_evidence_is_no_data():
+    """A region whose bundle lacks a key (the WA evidence pack has no
+    public-snapshot or default-SG data) or holds None must not pass."""
+    data = clean_bundle(PublicRdsSnapshots=None)
+    del data["Regions"]["us-east-1"]["WideOpenSecurityGroups"]
+    del data["Regions"]["us-east-1"]["Security"]["AccessAnalyzerFindings"]
+    statuses = _status(data)
+    for check_id in ("rds-snapshot-public", "sg-high-risk-ports", "sg-unauthorized-ports", "access-analyzer-findings"):
+        assert statuses[check_id] == engine.NO_DATA

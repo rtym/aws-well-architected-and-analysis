@@ -32,7 +32,16 @@ Notable changes to this plugin. Versions track `.claude-plugin/plugin.json`.
 - Access Analyzer evidence now records the analyzers, so zero findings from zero analyzers is NO DATA, not a pass.
 
 ### Tests
-- Suite 628 → 806, covering the engine, every check, the attack paths, scorecard and KPI escaping, and PDF rendering with no WeasyPrint warnings.
+- Suite 628 → 811 tests, line coverage still 100%. New tests cover the engine, every check, the attack paths, scorecard and KPI escaping, and PDF rendering with no WeasyPrint warnings.
+
+### Fixed (found while building 1.5.0)
+- Cost Explorer's rightsizing type is `TERMINATE`/`MODIFY` (upper case); the new savings estimate matches that, verified against the botocore model.
+
+### Docs
+- Updated the security, DR, cost, WA, and gap-analysis skill guides.
+- Rewrote the severity reference around the verified Security Hub control severities, including a correction: EC2.2 is HIGH, not LOW.
+- Added CONTRIBUTING guidance on adding a scored check.
+- Added the new verified sources to SOURCES.md.
 
 ## [1.4.1]
 

@@ -335,3 +335,31 @@ def test_securityhub_findings_keeps_notified_findings_open(ctx):
     )
     assert security.securityhub_findings(ctx, "us-east-1") == []
     stub.assert_no_pending_responses()
+
+
+def test_access_analyzers_lists_name_type_and_status(ctx):
+    aa, stub = install_stub(ctx, "accessanalyzer")
+    stub.add_response(
+        "list_analyzers",
+        {
+            "analyzers": [
+                {
+                    "arn": "arn:analyzer/1",
+                    "name": "org",
+                    "type": "ORGANIZATION",
+                    "status": "ACTIVE",
+                    "createdAt": "2024-01-01T00:00:00.000Z",
+                }
+            ]
+        },
+    )
+    with stub:
+        analyzers = security.access_analyzers(ctx, "us-east-1")
+    assert analyzers == [{"arn": "arn:analyzer/1", "name": "org", "type": "ORGANIZATION", "status": "ACTIVE"}]
+
+
+def test_access_analyzers_is_none_when_access_is_denied(ctx):
+    aa, stub = install_stub(ctx, "accessanalyzer")
+    stub.add_client_error("list_analyzers", service_error_code="AccessDeniedException")
+    with stub:
+        assert security.access_analyzers(ctx, "us-east-1") is None

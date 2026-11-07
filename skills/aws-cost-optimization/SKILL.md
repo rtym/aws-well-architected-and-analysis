@@ -61,9 +61,13 @@ fails (WeasyPrint needs Pango: `brew install pango` on macOS), the Markdown
 and HTML reports are already written -- rerun with `--formats md,html` or
 tell the user how to enable PDF.
 
-This produces a report with: monthly cost trend by top service, cost
-distribution pie chart, RI/Savings Plans utilization, Cost Explorer
-rightsizing recommendations, Compute Optimizer EC2 recommendations, idle
+This produces a report with: headline KPIs (spend in the window, the
+last full month and its change against the month before, estimated
+monthly rightsizing savings, RI/Savings Plans utilization, idle resources,
+budgets), a stacked monthly cost chart by service, a cost-share donut with
+a top-services table, RI/Savings Plans utilization, Cost Explorer
+rightsizing recommendations ranked by estimated monthly savings, Compute
+Optimizer EC2 recommendations, idle
 resource counts per region with a chart, Trusted Advisor cost checks (if
 available), and cost anomalies (if Cost Anomaly Detection is configured).
 

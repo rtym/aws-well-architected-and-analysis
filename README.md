@@ -21,13 +21,13 @@ with charts.
 |---|---|---|
 | `aws-well-architected-review` | `skills/aws-well-architected-review/` | Collects evidence across all six Well-Architected pillars and scores best-practice questions against it |
 | `aws-cost-optimization` | `skills/aws-cost-optimization/` | Cost Explorer trends, RI/Savings Plans coverage, rightsizing, idle-resource waste, and a prioritized savings strategy |
-| `aws-security-review` | `skills/aws-security-review/` | GuardDuty, Security Hub, Inspector, Macie, IAM Access Analyzer, AWS Config, IAM hygiene, S3/EBS/RDS/Lambda exposure, KMS rotation, wide-open and default security groups |
+| `aws-security-review` | `skills/aws-security-review/` | A 0-100 posture score from 31 checks mapped to Security Hub controls, attack paths that correlate gaps on the same resource or region, and one ranked action list -- over GuardDuty, Security Hub, Inspector, Macie, IAM Access Analyzer, AWS Config, IAM hygiene, S3/EBS/RDS/Lambda exposure, KMS rotation, and security groups |
 | `aws-architecture-discovery` | `skills/aws-architecture-discovery/` | Full infrastructure inventory (VPC/network, compute, containers, data stores) with Mermaid topology diagrams -- every edge labelled with its route/protocol, plus a legend |
 | `aws-architecture-gap-analysis` | `skills/aws-architecture-gap-analysis/` | Synthesizes the other skills' output into one prioritized gap analysis |
 | `aws-network-traffic-analysis` | `skills/aws-network-traffic-analysis/` | VPC Flow Logs (via CloudWatch Logs Insights) + GuardDuty network findings: top talkers, rejected traffic, port-scan heuristic, anomalies |
 | `aws-lucid-diagrams` | `skills/aws-lucid-diagrams/` | Draws polished AWS architecture diagrams in Lucidchart (via the Lucid MCP connector) using real AWS service icons, laid out to minimize crossings, with a self-check visual pass before handoff |
 | `aws-organizations-posture` | `skills/aws-organizations-posture/` | Multi-account posture: Organizations membership, SCP coverage, delegated administrators, whether GuardDuty/Security Hub are managed org-wide |
-| `aws-dr-readiness` | `skills/aws-dr-readiness/` | AWS Backup coverage, RDS Multi-AZ/replica/global-cluster topology, S3 replication, Route 53 health checks -- mapped against AWS's DR strategy tiers |
+| `aws-dr-readiness` | `skills/aws-dr-readiness/` | A DR readiness score and ordered fixes over AWS Backup coverage, RDS Multi-AZ/replica/global-cluster topology, S3 replication, and Route 53 health checks -- mapped against AWS's DR strategy tiers |
 
 Every skill's `SKILL.md` lists its own trigger phrases and workflow in
 detail -- this README covers installation and setup only.
@@ -53,8 +53,12 @@ drawn from general knowledge of AWS's public docs.
 │   │                               #   data_stores, cost, security, network_traffic, cloudtrail,
 │   │                               #   observability, quotas, backup, dr, organizations,
 │   │                               #   well_architected
+│   ├── analysis/
+│   │   ├── checks.py              # scoring engine: PASS/FAIL/NO DATA, Security Hub-method score, priority ranking
+│   │   ├── security_checks.py     # 31 security checks, attack-path correlations, threat triage
+│   │   └── dr_checks.py           # DR readiness checks
 │   └── reporting/
-│       ├── charts.py               # matplotlib chart helpers -> base64 PNG data URIs
+│       ├── charts.py               # matplotlib chart helpers -> base64 SVG data URIs
 │       ├── report.py               # Report class -> Markdown / HTML / PDF (via WeasyPrint)
 │       └── jsonutil.py             # JSON serialization for raw boto3 evidence dumps
 ├── skills/<skill-name>/
@@ -201,7 +205,8 @@ The suite covers four layers:
 | Layer | Files | What it guards |
 |---|---|---|
 | Collectors | `test_collectors_*.py` | Each AWS call's request shape, response parsing, and graceful degradation when a service is disabled or a permission is missing |
-| Reporting | `test_reporting.py`, `test_jsonutil.py` | Chart rendering, Markdown/HTML/PDF output, and the HTML-escaping contract (see `CONTRIBUTING.md`) |
+| Reporting | `test_reporting.py`, `test_jsonutil.py` | Chart rendering, the scorecard/KPI/contents layout, Markdown/HTML/PDF output with no WeasyPrint warnings, and the HTML-escaping contract (see `CONTRIBUTING.md`) |
+| Analysis | `test_analysis_*.py` | The scoring engine, every security and DR check against its own evidence (and NO DATA on missing evidence), the EC2.19/EC2.18 port logic, each attack path, and threat triage |
 | Report assembly | `test_skill_scripts.py` | Each skill's `build_report()` against synthetic evidence |
 | Prose quality | `test_prose_quality.py` | Every rendered report and the plugin's own docs pass the prose lint (no filler vocabulary, no unfilled placeholders, orientation paragraph present, severity legends list only used levels) |
 | IAM policy coverage | `test_permissions.py` | Every AWS API call the collectors make is granted by `PERMISSIONS.md`'s least-privilege policy, every action uses a real IAM prefix, and every explicit action names a real operation |
@@ -222,6 +227,15 @@ change it) in Markdown, HTML, and PDF (`--formats` to pick a subset). Pass
 recommended whenever you plan to run more than one skill in the same
 session, since `aws-architecture-gap-analysis` and follow-up questions
 read that JSON instead of re-querying AWS.
+
+Each HTML/PDF report opens with a cover header (account, regions,
+generation time, plugin version), headline KPI tiles, and -- for the
+security and DR reports -- a score ring with a per-area breakdown, then a
+table of contents (with page numbers in the PDF). Severity and status
+values render as colored labels, charts are vector SVG, the HTML follows
+the system's dark mode, and every PDF page carries a footer with the page
+number. The Markdown file carries the same content as plain text and
+tables.
 
 Reports open with an orientation paragraph and define the severity levels
 they use; `bin/lint-report-prose reports/output` re-checks a batch of
