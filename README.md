@@ -124,7 +124,7 @@ Claude Code provides it, otherwise `~/.cache/aws-well-architected-and-analysis/`
 (set `AWS_WAA_VENV` to choose another path).
 
 The only prerequisite is a Python 3.11+ interpreter on `PATH`
-(`python3.13`, `python3.12`, `python3.11` or `python3`). macOS's built-in
+(`python3.14`, `python3.13`, `python3.12`, `python3.11` or `python3`, tried in that order). macOS's built-in
 `/usr/bin/python3` is 3.9 and isn't enough -- `brew install python@3.12`.
 
 WeasyPrint (used for PDF export) needs a few system libraries beyond pip
@@ -204,12 +204,15 @@ The suite covers four layers:
 | Reporting | `test_reporting.py`, `test_jsonutil.py` | Chart rendering, Markdown/HTML/PDF output, and the HTML-escaping contract (see `CONTRIBUTING.md`) |
 | Report assembly | `test_skill_scripts.py` | Each skill's `build_report()` against synthetic evidence |
 | Prose quality | `test_prose_quality.py` | Every rendered report and the plugin's own docs pass the prose lint (no filler vocabulary, no unfilled placeholders, orientation paragraph present, severity legends list only used levels) |
+| IAM policy coverage | `test_permissions.py` | Every AWS API call the collectors make is granted by `PERMISSIONS.md`'s least-privilege policy, every action uses a real IAM prefix, and every explicit action names a real operation |
 | End-to-end + structure | `test_script_main.py`, `test_skill_integrity.py`, `test_cli.py`, `test_session.py` | Each script's `main()` writing real files; SKILL.md frontmatter, name/directory agreement, and that every `${CLAUDE_PLUGIN_ROOT}` path a skill references exists |
 
 CI (`.github/workflows/tests.yml`) runs the full suite on Python 3.11,
-3.12, and 3.13, byte-compiles every module, gates on `ruff check --select F`
-(unused imports / undefined names), and checks that every skill's CLI
-script exposes `--help` cleanly.
+3.12, 3.13, and 3.14, byte-compiles every module, gates on `ruff check`
+(the correctness rule set in `pyproject.toml`: pyflakes, bugbear, naive
+datetimes, and three security checks), and checks that every skill's CLI
+script exposes `--help` cleanly. `make check` runs the same gates locally
+and re-syncs `.venv` first whenever a requirements file has changed.
 
 ## Report output
 

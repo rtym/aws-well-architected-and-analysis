@@ -2,6 +2,108 @@
 
 Notable changes to this plugin. Versions track `.claude-plugin/plugin.json`.
 
+## [1.4.1]
+
+### Fixed
+
+- **The least-privilege policy granted nothing for IAM Access Analyzer.**
+  `PERMISSIONS.md` listed `accessanalyzer:ListAnalyzers` and
+  `accessanalyzer:ListFindings`, using the boto3 client name instead of the
+  IAM prefix `access-analyzer`, so under Option B the Access Analyzer
+  section was always empty. A new test (below) now catches this class of
+  mistake.
+- **Security scans crashed when run from a region other than the
+  CloudTrail trail's home region.** `GetTrailStatus` was called with the
+  trail name, which raises `TrailNotFoundException` for a shadow trail and
+  for an organization trail seen from a member account. It now uses the
+  trail ARN, and an unresolvable trail is recorded with unknown status
+  instead of aborting the scan.
+- **DR readiness crashed on accounts with calculated Route 53 health
+  checks** (the usual building block of DNS failover): Route 53's status
+  API rejects them. They are now listed without a status.
+- **GuardDuty findings included archived ones.** `ListFindings` returns
+  archived findings unless filtered, and suppression rules archive
+  findings automatically, so the report resurfaced noise the account owner
+  had silenced. Findings are now unarchived only and requested most severe
+  first, so the 200-finding cap drops the least severe.
+- **GuardDuty attack-sequence findings (severity 9.0-10.0) were labelled
+  HIGH.** They now get GuardDuty's documented CRITICAL band. The two
+  scripts that each carried a copy of the thresholds share one function.
+- **Access Analyzer missed unused-access and internal-access findings**,
+  which only `ListFindingsV2` returns. The report table now shows each
+  finding's type and resource.
+- **Silent truncation in five collectors:** Cost Explorer
+  `GetCostAndUsage` (no botocore paginator; pages split inside a period are
+  now merged), `GetRightsizingRecommendation` and `GetAnomalies`
+  (paginators existed but went unused), and both Compute Optimizer
+  recommendation calls (`nextToken` was never followed).
+- **ECS inventory failed with more than 100 clusters in a region**
+  (`DescribeClusters` takes at most 100); calls are now batched.
+- **ACM expiry checks skipped ECDSA and RSA 3072/4096 certificates**:
+  `ListCertificates` returns only RSA_1024 and RSA_2048 by default.
+- **False positives:**
+  - HTTP listeners that only redirect to HTTPS (the recommended setup,
+    FSBP ELB.1) were reported as plaintext listeners.
+  - Instances with the metadata endpoint disabled, and terminated
+    instances, were reported as allowing IMDSv1.
+  - Every Aurora and Multi-AZ DB cluster member was reported as a
+    single-AZ instance; those are now judged at the cluster level, with a
+    separate table for single-AZ clusters.
+  - KMS keys with imported or custom-key-store material, which can't
+    rotate automatically, were reported under KMS.4.
+- **The Organizations SCP check measured the wrong thing.** It counted
+  only SCPs attached directly to an account, and counted the allow-all
+  `FullAWSAccess` that AWS attaches to every account by default, so a
+  typical organization always reported full coverage. It now computes
+  effective coverage through root and OU inheritance (nested OUs
+  included), ignores `FullAWSAccess`, and leaves out the management
+  account, to which SCPs never apply. Needs two more read-only actions:
+  `organizations:ListAccountsForParent` and
+  `organizations:ListOrganizationalUnitsForParent`.
+- Security Hub findings in workflow state NOTIFIED (owner told, issue
+  still open) were filtered out along with resolved ones.
+- Public RDS snapshot checks (RDS.1) covered DB snapshots only, missing
+  Aurora and Multi-AZ DB cluster snapshots.
+- A CloudTrail posture of "a multi-region trail exists" plus "some trail
+  is logging" read as compliant even when the multi-region trail was
+  stopped. Both reports now state whether one trail is multi-region *and*
+  logging (CloudTrail.1).
+- Security-group rules for all traffic rendered their port range as
+  "None-None"; they now read "all".
+- Logs Insights polling didn't treat `Timeout` as a terminal state and
+  waited out the full local timeout.
+- Since 1.4.0 the security scan reads RDS; a credential without RDS access
+  aborted the scan. The RDS describe calls now degrade like the rest.
+- The account ID is fetched once per run instead of once per region.
+
+### Changed
+
+- **Dependency floors raised** to the current releases: boto3 and botocore
+  >=1.43.126, Markdown >=3.11.3, pytest >=9.2.0, ruff >=0.17.4.
+- **Python 3.14** joins the CI matrix, and `bin/run-skill-script` now
+  tries `python3.14` first (it previously never looked for it, so a
+  machine with only 3.14 installed was told no suitable Python existed).
+- `make` targets re-sync `.venv` whenever a requirements file changes.
+  The local venv had drifted below the requirement floors (boto3 1.43.93
+  against a floor of 1.43.122), so local runs weren't testing what CI
+  tests.
+- README: the CI description named a stale `ruff --select F` gate; it now
+  describes the rule set in `pyproject.toml`.
+
+### Tests
+
+- New `tests/test_permissions.py` statically finds every AWS API call in
+  the collectors (126 distinct operations) and checks that `PERMISSIONS.md`
+  grants each one, that every action uses a real IAM prefix, and that
+  every explicit action names a real operation. Verified to fail on the
+  original `accessanalyzer:` prefix and on a removed action.
+- Regression tests for every fix above, a drift test tying the launcher's
+  interpreter list to the CI matrix, a multi-VPC topology test (each
+  resource drawn under its own VPC only), and an in-process run of each
+  script's `__main__` entry point.
+- Suite grows 457 -> 628; line coverage of `shared/` and `skills/` is
+  now 100% (2,074 statements), up from 99%.
+
 ## [1.4.0]
 
 ### Added

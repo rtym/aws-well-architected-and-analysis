@@ -23,6 +23,12 @@ AWS has since revised the relevant page.
 | https://docs.aws.amazon.com/wellarchitected/2025-02-25/framework/a-workload-architecture.html | Current REL04/REL05 question texts ("design interactions in a distributed system to prevent / to mitigate or withstand failures") | `skills/aws-well-architected-review/references/pillars/reliability.md` |
 | https://docs.aws.amazon.com/wellarchitected/2025-02-25/framework/a-alignment-to-demand.html | Current SUS02 question text ("How do you align cloud resources to your demand?") | `skills/aws-well-architected-review/references/pillars/sustainability.md` |
 | https://docs.aws.amazon.com/wellarchitected/2025-02-25/framework/a-security.html, `a-reliability.html`, `a-cost-optimization.html`, `a-sustainability.html` | Confirmed the SEC01-SEC11, REL01-REL13, COST01-COST11, and SUS01-SUS06 topic structures still match the pillar references | `skills/aws-well-architected-review/references/pillars/*.md` |
+| https://docs.aws.amazon.com/guardduty/latest/APIReference/API_ListFindings.html (via search excerpts, 2026-11-07) | `ListFindings` returns archived findings too unless `service.archived` is set to false | `shared/awslib/collectors/security.py` (`GUARDDUTY_UNARCHIVED`), `skills/aws-security-review/references/severity-and-standards.md` |
+| https://docs.aws.amazon.com/guardduty/latest/ug/guardduty_findings-severity.html (via search excerpts, 2026-11-07) | GuardDuty severity bands, including Critical (9.0-10.0) for Extended Threat Detection attack sequences | `guardduty_severity_label()` in `shared/awslib/collectors/security.py`, the severity reference |
+| https://docs.aws.amazon.com/IAM/latest/UserGuide/access-analyzer-work-with-findings.html (via search excerpts, 2026-11-07) | Unused-access and internal-access findings are available only through `ListFindingsV2`; both list APIs use the `access-analyzer:ListFindings` action | `access_analyzer_findings()`, `PERMISSIONS.md` |
+| https://docs.aws.amazon.com/awscloudtrail/latest/APIReference/API_GetTrailStatus.html (via search excerpts, 2026-11-07) | `GetTrailStatus` needs the trail ARN for a shadow trail and for an organization trail seen from a member account | `shared/awslib/collectors/cloudtrail.py` |
+| https://docs.aws.amazon.com/Route53/latest/APIReference/API_GetHealthCheckStatus.html (via search excerpts, 2026-11-07) | `GetHealthCheckStatus` can't return the status of a calculated health check | `list_health_checks()` in `shared/awslib/collectors/dr.py` |
+| botocore 1.43.126 service-model documentation (shipped in the venv, read 2026-11-07) | ACM `Filters.keyTypes`: default filtering returns only RSA_1024 and RSA_2048 certificates; ECS `DescribeClusters` accepts up to 100 clusters per call; the paginator and enum facts the collectors rely on | `describe_acm_certificates()` in `shared/awslib/collectors/compute.py`, `describe_ecs()` in `containers.py` |
 | https://docs.aws.amazon.com/securityhub/latest/userguide/rds-controls.html, `cis-aws-foundations-benchmark.html`, `securityhub-standards-fsbp.html` (via search excerpts, 2026-11-06) | Security Hub control IDs for the scan's deterministic checks: EC2.1 (public EBS snapshot), EC2.2 (default SG), EC2.3 (EBS encryption), EC2.7 (EBS encryption by default), RDS.1 (public RDS snapshot), RDS.2 (public RDS instance), RDS.3 (RDS encryption), S3.1 (account Block Public Access), KMS.4 (key rotation). IAM.3's exact wording came from a 2021 secondary source and is labeled as such | `skills/aws-security-review/references/severity-and-standards.md`, docstrings in `shared/awslib/collectors/security.py` |
 
 One fetch attempt did not return usable content and its claims were
@@ -56,6 +62,15 @@ re-checked against the source before being treated as current:
 - CIS AWS Foundations Benchmark / AWS Foundational Security Best Practices
   / PCI DSS as Security Hub standards, and their general purpose
   (`skills/aws-security-review/references/severity-and-standards.md`).
+- AWS Organizations SCP semantics used by the coverage check in
+  `shared/awslib/collectors/organizations.py`: SCPs attached to the root
+  or an OU apply to every account beneath it; AWS attaches the allow-all
+  `FullAWSAccess` policy (ID `p-FullAWSAccess`) by default; SCPs never
+  apply to the management account. Long-standing documented behavior,
+  not re-fetched for 1.4.1.
+- Aurora and Multi-AZ DB cluster members reporting `MultiAZ: false` at the
+  instance level while the cluster's own `MultiAZ` field carries the
+  answer (`rds_dr_signals()` in `shared/awslib/collectors/dr.py`).
 
 ## Not sourced from the public internet
 

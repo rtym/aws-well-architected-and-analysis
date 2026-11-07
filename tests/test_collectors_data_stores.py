@@ -2,6 +2,7 @@ import boto3
 from moto import mock_aws
 
 from shared.awslib.collectors import data_stores
+from tests.stub_helpers import install_stub
 
 
 @mock_aws
@@ -165,3 +166,55 @@ def test_bucket_helpers_propagate_unexpected_s3_errors():
             with pytest.raises(ClientError) as exc:
                 helper(s3, "some-bucket")
             assert exc.value.response["Error"]["Code"] == "PermanentRedirect"
+
+
+def test_public_rds_cluster_snapshots_flags_only_snapshots_shared_with_all(ctx):
+    """FSBP RDS.1 covers cluster snapshots too; only DB snapshots were
+    checked, which missed every Aurora account's exposure."""
+    rds, stub = install_stub(ctx, "rds", region="us-east-1")
+    stub.add_response(
+        "describe_db_cluster_snapshots",
+        {
+            "DBClusterSnapshots": [
+                {"DBClusterSnapshotIdentifier": "csnap-public", "Engine": "aurora-postgresql"},
+                {"DBClusterSnapshotIdentifier": "csnap-private", "Engine": "aurora-postgresql"},
+                {"Engine": "aurora-mysql"},
+            ]
+        },
+        {"SnapshotType": "manual"},
+    )
+
+    def attrs(ident, values):
+        return {
+            "DBClusterSnapshotAttributesResult": {
+                "DBClusterSnapshotIdentifier": ident,
+                "DBClusterSnapshotAttributes": [{"AttributeName": "restore", "AttributeValues": values}],
+            }
+        }
+
+    stub.add_response(
+        "describe_db_cluster_snapshot_attributes",
+        attrs("csnap-public", ["all"]),
+        {"DBClusterSnapshotIdentifier": "csnap-public"},
+    )
+    stub.add_response(
+        "describe_db_cluster_snapshot_attributes",
+        attrs("csnap-private", ["210987654321"]),
+        {"DBClusterSnapshotIdentifier": "csnap-private"},
+    )
+
+    found = data_stores.public_rds_cluster_snapshots(ctx, "us-east-1")
+    assert found == [{"DBSnapshotIdentifier": "csnap-public", "Engine": "aurora-postgresql"}]
+    stub.assert_no_pending_responses()
+
+
+def test_rds_describes_degrade_when_access_is_denied(ctx):
+    """The security scan reads RDS since 1.4.0; a security-scoped credential
+    without RDS access must not abort a scan that otherwise works."""
+    rds, stub = install_stub(ctx, "rds", region="us-east-1")
+    stub.add_client_error("describe_db_instances", service_error_code="AccessDenied")
+    stub.add_client_error("describe_db_clusters", service_error_code="AccessDenied")
+    stub.add_client_error("describe_db_snapshots", service_error_code="AccessDenied")
+    assert data_stores.describe_rds_instances(ctx, "us-east-1") == []
+    assert data_stores.describe_rds_clusters(ctx, "us-east-1") == []
+    assert data_stores.describe_rds_snapshots(ctx, "us-east-1") == []

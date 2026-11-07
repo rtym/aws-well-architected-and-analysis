@@ -347,6 +347,47 @@ def test_vpc_topology_connects_a_subnet_routed_through_a_transit_gateway():
     diagram = discover.vpc_topology_mermaid("us-east-1", network)
     assert "subnet_1 -->|\"0.0.0.0/0 via rtb-1: private routing only, no internet\"| tgw_7" in diagram
 
+def test_vpc_topology_draws_each_resource_under_its_own_vpc_only():
+    """With two VPCs, every gateway, attachment, subnet and endpoint has to
+    attach to its own VPC and never to the other one. Every single-VPC
+    fixture passed regardless of that filtering. A peering record missing
+    one side is skipped rather than drawn half-connected."""
+    network = {
+        "Vpcs": [
+            {"VpcId": "vpc-a", "CidrBlock": "10.0.0.0/16"},
+            {"VpcId": "vpc-b", "CidrBlock": "10.1.0.0/16"},
+        ],
+        "InternetGateways": [{"InternetGatewayId": "igw-a", "Attachments": [{"VpcId": "vpc-a"}]}],
+        "NatGateways": [{"NatGatewayId": "nat-b", "VpcId": "vpc-b", "SubnetId": "subnet-b"}],
+        "TransitGatewayAttachments": [
+            {"TransitGatewayAttachmentId": "tgw-attach-b", "TransitGatewayId": "tgw-1", "ResourceId": "vpc-b"}
+        ],
+        "Subnets": [
+            {"SubnetId": "subnet-a", "VpcId": "vpc-a", "CidrBlock": "10.0.1.0/24"},
+            {"SubnetId": "subnet-b", "VpcId": "vpc-b", "CidrBlock": "10.1.1.0/24"},
+        ],
+        "RouteTables": [],
+        "VpcEndpoints": [
+            {"VpcEndpointId": "vpce-a", "VpcId": "vpc-a", "VpcEndpointType": "Gateway", "ServiceName": "com.amazonaws.us-east-1.s3"}
+        ],
+        "VpcPeeringConnections": [
+            {"VpcPeeringConnectionId": "pcx-broken", "RequesterVpcInfo": {"VpcId": "vpc-a"}, "AccepterVpcInfo": {}}
+        ],
+    }
+    edges = _edges(discover.vpc_topology_mermaid("us-east-1", network))
+
+    def touching(node_id):
+        return [e for e in edges if node_id in e]
+
+    assert all("vpc_a" in e or "internet" in e for e in touching("igw_a"))
+    assert not any("vpc_a" in e for e in touching("tgw_1"))
+    assert any("vpc_b" in e for e in touching("tgw_1"))
+    assert any(e.startswith("vpc_a") for e in touching("subnet_a"))
+    assert not any("vpc_a" in e for e in touching("subnet_b"))
+    assert not any("vpc_b" in e for e in touching("vpce_a"))
+    assert "pcx" not in "\n".join(edges)
+
+
 def test_vpc_topology_is_structurally_valid_mermaid():
     """Cheap stand-in for a Mermaid parser: balanced subgraph/end pairs, no
     label with an odd number of quotes, and no edge pointing at a node that
@@ -555,6 +596,118 @@ def test_security_scan_clean_account_omits_conditional_exposure_sections():
     assert "Default Security Groups Allowing Traffic" not in md
 
 
+def _security_data(**region_overrides) -> dict:
+    """A clean single-region security evidence bundle; tests override the
+    parts they exercise."""
+    region = {
+        "Security": {
+            "GuardDuty": {"Enabled": True, "DetectorIds": ["d1"]},
+            "SecurityHub": {"Enabled": True},
+            "Inspector2": {"Enabled": True, "Status": "ENABLED"},
+            "Macie": {"Enabled": True, "Status": "ENABLED"},
+            "GuardDutyFindings": [],
+            "SecurityHubFindings": [],
+            "SecurityHubStandardsSummary": [],
+            "AccessAnalyzerFindings": [],
+            "ConfigRuleCompliance": [],
+            "ConfigRecorder": {"Recording": True},
+            "EbsEncryptionByDefault": True,
+            "UnencryptedEbsVolumes": [],
+            "PublicEbsSnapshots": [],
+            "KmsKeysWithoutRotation": [],
+            "LambdaUrlsWithoutAuth": [],
+        },
+        "WideOpenSecurityGroups": [],
+        "DefaultSecurityGroupsWithRules": [],
+        "RdsExposure": {"PubliclyAccessible": [], "Unencrypted": []},
+        "PublicRdsSnapshots": [],
+        "Compute": {"InstancesAllowingImdsv1": [], "PlaintextListeners": [], "ExpiringCertificates": []},
+    }
+    for key, value in region_overrides.items():
+        if key in region["Security"]:
+            region["Security"][key] = value
+        else:
+            region[key] = value
+    return {
+        "Global": {
+            "IamFindings": {"ConsoleUsersWithoutMfa": [], "AccessKeysToReview": [], "RootAccountRisks": [], "PasswordPolicySet": True},
+            "DataStores": {"PubliclyAccessibleBuckets": [], "UnencryptedBuckets": []},
+            "AccountPublicAccessBlock": {"BlockPublicAcls": True, "IgnorePublicAcls": True, "BlockPublicPolicy": True, "RestrictPublicBuckets": True},
+            "CloudTrail": {
+                "Trails": [{"Name": "t"}],
+                "HasMultiRegionTrail": True,
+                "HasLoggingTrail": True,
+                "HasLoggingMultiRegionTrail": True,
+                "HasLogFileValidation": True,
+            },
+        },
+        "Regions": {"us-east-1": region},
+    }
+
+
+def test_security_scan_guardduty_table_is_most_severe_first_with_critical_band():
+    """The GuardDuty table kept the first 40 findings in collection order, so
+    with many findings the most severe could be cut; attack sequences
+    (severity 9+) were also labelled HIGH instead of CRITICAL."""
+    data = _security_data(
+        GuardDutyFindings=[
+            {"Type": "Recon:EC2/PortProbeUnprotectedPort", "Severity": 2.0},
+            {"Type": "AttackSequence:IAM/CompromisedCredentials", "Severity": 9.5},
+            {"Type": "Trojan:EC2/DNSDataExfiltration", "Severity": 8.0},
+        ]
+    )
+    md = _assert_renders(security_scan.build_report(data))
+    section = md.split("## GuardDuty Findings", 1)[1]
+    order = [section.index(t) for t in ("AttackSequence", "Trojan", "Recon")]
+    assert order == sorted(order)
+    # Severity cells render as badges; the label sits just before the type.
+    assert "CRITICAL</span> | AttackSequence:IAM/CompromisedCredentials |" in md
+
+
+def test_security_scan_formats_security_group_port_ranges():
+    """An all-traffic rule (protocol -1) has no ports and rendered as
+    "None-None"."""
+    data = _security_data(
+        WideOpenSecurityGroups=[
+            {"GroupId": "sg-all", "IpProtocol": "-1", "OpenRanges": ["0.0.0.0/0"]},
+            {"GroupId": "sg-ssh", "IpProtocol": "tcp", "FromPort": 22, "ToPort": 22, "OpenRanges": ["0.0.0.0/0"]},
+            {"GroupId": "sg-range", "IpProtocol": "udp", "FromPort": 1000, "ToPort": 2000, "OpenRanges": ["::/0"]},
+        ]
+    )
+    md = _assert_renders(security_scan.build_report(data))
+    assert "None" not in md.split("## Wide-Open Security Group Rules", 1)[1]
+    assert "| us-east-1 | sg-all | all | -1 |" in md
+    assert "| us-east-1 | sg-ssh | 22 | tcp |" in md
+    assert "| us-east-1 | sg-range | 1000-2000 | udp |" in md
+
+
+def test_security_scan_access_analyzer_table_names_the_finding_type():
+    """Unused-access findings (now collected via ListFindingsV2) need their
+    type shown, or an unused role reads like an external-access exposure."""
+    data = _security_data(
+        AccessAnalyzerFindings=[
+            {"findingType": "UnusedIAMRole", "resourceType": "AWS::IAM::Role", "resource": "arn:aws:iam::123456789012:role/old-ci"},
+            {"resourceType": "AWS::S3::Bucket", "resource": "arn:aws:s3:::shared"},
+        ]
+    )
+    md = _assert_renders(security_scan.build_report(data))
+    assert "| us-east-1 | UnusedIAMRole | AWS::IAM::Role | arn:aws:iam::123456789012:role/old-ci |" in md
+    # Evidence without a findingType predates V2, which only had external access.
+    assert "| us-east-1 | ExternalAccess | AWS::S3::Bucket | arn:aws:s3:::shared |" in md
+
+
+def test_security_scan_reports_the_cloudtrail_1_combination():
+    data = _security_data()
+    data["Global"]["CloudTrail"]["HasLoggingMultiRegionTrail"] = False
+    md = _assert_renders(security_scan.build_report(data))
+    assert "**A multi-region trail is logging (CloudTrail.1):** NO -- gap" in md
+    # Evidence JSON from before the flag existed falls back to the two
+    # older flags rather than raising KeyError.
+    del data["Global"]["CloudTrail"]["HasLoggingMultiRegionTrail"]
+    md = _assert_renders(security_scan.build_report(data))
+    assert "**A multi-region trail is logging (CloudTrail.1):** yes" in md
+
+
 def test_standard_name_parses_ruleset_arn():
     assert security_scan._standard_name(
         "arn:aws:securityhub:::ruleset/cis-aws-foundations/v/1.2.0"
@@ -716,6 +869,11 @@ def test_analyze_organization_build_report_flags_uncovered_accounts_and_no_deleg
     assert "222222222222" in md
     assert "NOT configured" in md  # GuardDuty admin missing
     assert "111111111111" in md  # Security Hub admin present
+    assert "Accounts With No Restrictive SCP in Effect" in md
+    # The policy table shows where each SCP is attached, root and OUs
+    # included, not only direct account attachments.
+    assert "| Policy | Description | Root | OUs | Accounts |" in md
+    assert "SCPs never apply to it" in md
 
 
 # ------------------------------------------------------------------- aws-dr-readiness
@@ -736,6 +894,29 @@ def test_dr_readiness_build_report_flags_single_az_and_missing_health_checks():
     md = _assert_renders(report)
     assert "db-1" in md
     assert "No Route 53 health checks configured" in md
+
+
+def test_dr_readiness_lists_single_az_clusters_with_their_own_table():
+    """Cluster members are judged at the cluster level now; a single-AZ
+    cluster needs its own table, and the chart counts it separately."""
+    data = {
+        "Summary": {
+            "Backup": {"PlanCount": 1, "VaultCount": 1, "PlansWithCrossRegionCopy": 1, "ProtectedResourceCount": 3, "RecentFailedJobs": 0},
+            "Rds": {
+                "SingleAzInstances": [],
+                "SingleAzClusters": [{"DBClusterIdentifier": "dev-aurora", "Engine": "aurora-postgresql"}],
+                "InstancesWithReadReplicas": [],
+                "CrossRegionOrGlobalClusters": [],
+            },
+            "S3": {"ReplicatedBuckets": [], "UnreplicatedBuckets": []},
+            "Route53HealthChecks": [],
+        }
+    }
+    md = _assert_renders(dr_readiness.build_report(data))
+    assert "## RDS Clusters in a Single Availability Zone" in md
+    assert "| dev-aurora | aurora-postgresql |" in md
+    assert "RDS Instances Without Multi-AZ" not in md
+    assert "judged at the cluster level" in md
 
 
 def test_dr_readiness_build_report_with_health_checks_and_replication():
@@ -862,15 +1043,22 @@ def test_analyze_cost_report_with_every_section_populated():
 
 
 def test_guardduty_severity_score_to_label_boundaries():
-    """AWS documents GuardDuty severity bands as low < 4 <= medium < 7 <= high;
-    both scripts translate scores with the same thresholds."""
-    for label_fn in (security_scan.guardduty_severity_label, traffic_analysis._severity_label):
-        assert label_fn(8.2) == "HIGH"
-        assert label_fn(7.0) == "HIGH"
-        assert label_fn(6.9) == "MEDIUM"
-        assert label_fn(4.0) == "MEDIUM"
-        assert label_fn(3.9) == "LOW"
-        assert label_fn(0.0) == "LOW"
+    """GuardDuty's documented bands: low < 4 <= medium < 7 <= high < 9 <=
+    critical. The CRITICAL band (attack sequences) used to be reported as
+    HIGH, and each script carried its own copy of the thresholds."""
+    from shared.awslib.collectors.security import guardduty_severity_label as label_fn
+
+    assert label_fn(10.0) == "CRITICAL"
+    assert label_fn(9.0) == "CRITICAL"
+    assert label_fn(8.9) == "HIGH"
+    assert label_fn(7.0) == "HIGH"
+    assert label_fn(6.9) == "MEDIUM"
+    assert label_fn(4.0) == "MEDIUM"
+    assert label_fn(3.9) == "LOW"
+    assert label_fn(0.0) == "LOW"
+    # Both scripts use the one shared mapping rather than private copies.
+    assert traffic_analysis.guardduty_severity_label is label_fn
+    assert security_scan.security.guardduty_severity_label is label_fn
 
 
 def test_analyze_organization_report_shows_mixed_status_chart_and_delegated_admins():
@@ -895,7 +1083,7 @@ def test_analyze_organization_report_shows_mixed_status_chart_and_delegated_admi
     md = _assert_renders(analyze_organization.build_report(posture))
     assert "Account status" in md  # the mixed-status chart was drawn
     assert "security-tooling" in md
-    assert "Every account has at least one directly-attached SCP." in md
+    assert "Every member account has at least one restrictive SCP in effect." in md
     # AWS's current term, not the legacy API field name.
     assert "Management account" in md and "Master account" not in md
 

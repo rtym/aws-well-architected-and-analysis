@@ -106,6 +106,7 @@ def test_security_scan_collect_wires_global_and_regional_evidence(monkeypatch):
     monkeypatch.setattr(security_scan.data_stores, "describe_rds_snapshots", lambda ctx, region: [{"DBSnapshotIdentifier": f"snap-{region}"}])
     monkeypatch.setattr(security_scan.data_stores, "rds_exposure", lambda instances: {"PubliclyAccessible": instances, "Unencrypted": []})
     monkeypatch.setattr(security_scan.data_stores, "public_rds_snapshots", lambda ctx, region, snaps: [{"Public": snaps[0]["DBSnapshotIdentifier"]}])
+    monkeypatch.setattr(security_scan.data_stores, "public_rds_cluster_snapshots", lambda ctx, region: [{"PublicCluster": f"csnap-{region}"}])
     monkeypatch.setattr(security_scan.cloudtrail, "cloudtrail_posture", _tag("cloudtrail"))
     monkeypatch.setattr(security_scan.vpc, "describe_security_groups", lambda ctx, region: [{"GroupId": f"sg-{region}"}])
     monkeypatch.setattr(security_scan.vpc, "wide_open_security_groups", lambda sgs: [{"Open": sgs[0]["GroupId"]}])
@@ -120,7 +121,11 @@ def test_security_scan_collect_wires_global_and_regional_evidence(monkeypatch):
     assert data["Regions"]["eu-west-1"]["Security"]["args"] == ("eu-west-1",)
     # RDS exposure is derived from that region's own instance/snapshot lists.
     assert data["Regions"]["eu-west-1"]["RdsExposure"]["PubliclyAccessible"] == [{"DBInstanceIdentifier": "db-eu-west-1"}]
-    assert data["Regions"]["eu-west-1"]["PublicRdsSnapshots"] == [{"Public": "snap-eu-west-1"}]
+    # DB snapshots and Aurora/Multi-AZ cluster snapshots land in one list.
+    assert data["Regions"]["eu-west-1"]["PublicRdsSnapshots"] == [
+        {"Public": "snap-eu-west-1"},
+        {"PublicCluster": "csnap-eu-west-1"},
+    ]
     assert data["Global"]["collector"] == "global_security"
     # CloudTrail trails are account-wide: exactly one call, from the first region.
     assert data["Global"]["CloudTrail"]["args"] == ("us-east-1",)

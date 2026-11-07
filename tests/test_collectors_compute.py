@@ -2,6 +2,7 @@ import boto3
 from moto import mock_aws
 
 from shared.awslib.collectors import compute
+from tests.stub_helpers import install_stub
 
 
 @mock_aws
@@ -73,3 +74,64 @@ def test_describe_acm_certificates_returns_full_detail(ctx):
     # describe_certificate so expiry fields are available to the report.
     assert certs[0]["DomainName"] == "example.com"
     assert "Status" in certs[0]
+
+
+def test_imdsv1_check_skips_disabled_endpoint_and_terminated_instances():
+    """With the metadata endpoint switched off there is no IMDSv1 to abuse,
+    and a terminated instance (listed for about an hour) no longer exists;
+    both used to be flagged."""
+    instances = [
+        {"InstanceId": "i-open", "State": {"Name": "running"}, "MetadataOptions": {"HttpTokens": "optional", "HttpEndpoint": "enabled"}},
+        {"InstanceId": "i-off", "State": {"Name": "running"}, "MetadataOptions": {"HttpTokens": "optional", "HttpEndpoint": "disabled"}},
+        {"InstanceId": "i-gone", "State": {"Name": "terminated"}, "MetadataOptions": {"HttpTokens": "optional"}},
+        {"InstanceId": "i-v2", "State": {"Name": "running"}, "MetadataOptions": {"HttpTokens": "required"}},
+        {"InstanceId": "i-stopped", "State": {"Name": "stopped"}, "MetadataOptions": {"HttpTokens": "optional"}},
+    ]
+    found = [i["InstanceId"] for i in compute.instances_allowing_imdsv1(instances)]
+    assert found == ["i-open", "i-stopped"]
+
+
+def test_http_listener_that_redirects_to_https_is_not_plaintext():
+    """An HTTP:80 listener whose only action redirects to HTTPS is the
+    recommended setup (FSBP ELB.1); flagging it put nearly every
+    well-configured ALB in the "without TLS" table."""
+    lbs = [
+        {
+            "LoadBalancerArn": "arn:lb",
+            "LoadBalancerName": "web",
+            "_Listeners": [
+                {"Protocol": "HTTP", "Port": 80, "DefaultActions": [
+                    {"Type": "redirect", "RedirectConfig": {"Protocol": "HTTPS", "Port": "443", "StatusCode": "HTTP_301"}}
+                ]},
+                {"Protocol": "HTTP", "Port": 8080, "DefaultActions": [{"Type": "forward", "TargetGroupArn": "arn:tg"}]},
+                {"Protocol": "HTTP", "Port": 8081, "DefaultActions": [
+                    {"Type": "redirect", "RedirectConfig": {"Protocol": "HTTP", "Port": "80", "StatusCode": "HTTP_302"}}
+                ]},
+                {"Protocol": "HTTP", "Port": 8082},
+                {"Protocol": "HTTPS", "Port": 443, "DefaultActions": [{"Type": "forward"}]},
+                {"Protocol": "TCP", "Port": 5432, "DefaultActions": [{"Type": "forward"}]},
+            ],
+        }
+    ]
+    found = [(f["Protocol"], f["Port"]) for f in compute.plaintext_load_balancer_listeners(lbs)]
+    assert found == [("HTTP", 8080), ("HTTP", 8081), ("HTTP", 8082), ("TCP", 5432)]
+
+
+def test_acm_listing_requests_every_key_type(ctx):
+    """ListCertificates returns only RSA_1024/RSA_2048 certificates unless asked;
+    ECDSA and larger RSA certificates never reached the expiry check. The
+    list must track botocore's own enum, so a key type AWS adds later
+    fails this test instead of being skipped silently."""
+    import botocore.session
+
+    acm, stub = install_stub(ctx, "acm", region="us-east-1")
+    stub.add_response(
+        "list_certificates",
+        {"CertificateSummaryList": []},
+        {"Includes": {"keyTypes": compute.ACM_ALL_KEY_TYPES}},
+    )
+    assert compute.describe_acm_certificates(ctx, "us-east-1") == []
+    stub.assert_no_pending_responses()
+
+    enum = botocore.session.get_session().get_service_model("acm").shape_for("KeyAlgorithm").enum
+    assert sorted(compute.ACM_ALL_KEY_TYPES) == sorted(enum)

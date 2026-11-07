@@ -7,31 +7,52 @@ looping per resource.
 """
 from __future__ import annotations
 
-from ..session import AwsContext, ignore_access_denied, paginate
+from ..session import AwsContext, ignore_access_denied, manual_paginate, paginate
+
+
+def _cost_and_usage(ce, **kwargs) -> list[dict]:
+    """GetCostAndUsage across every page, one entry per time period.
+
+    The operation has no botocore paginator, and a page boundary can fall
+    inside a period -- the next page then repeats that TimePeriod with the
+    remaining groups. Reading only the first page silently dropped groups;
+    concatenating pages naively would duplicate periods.
+    """
+    merged: dict[tuple, dict] = {}
+    for period in manual_paginate(
+        ce, "get_cost_and_usage", "ResultsByTime",
+        token_arg="NextPageToken", token_field="NextPageToken", **kwargs,
+    ):
+        key = (period["TimePeriod"]["Start"], period["TimePeriod"]["End"])
+        if key in merged:
+            merged[key].setdefault("Groups", []).extend(period.get("Groups", []))
+        else:
+            merged[key] = period
+    return list(merged.values())
 
 
 def cost_and_usage_by_service(
     ctx: AwsContext, start: str, end: str, granularity: str = "MONTHLY"
 ) -> list[dict]:
     ce = ctx.client("ce", region="us-east-1")
-    resp = ce.get_cost_and_usage(
+    return _cost_and_usage(
+        ce,
         TimePeriod={"Start": start, "End": end},
         Granularity=granularity,
         Metrics=["UnblendedCost", "UsageQuantity"],
         GroupBy=[{"Type": "DIMENSION", "Key": "SERVICE"}],
     )
-    return resp["ResultsByTime"]
 
 
 def cost_by_linked_account(ctx: AwsContext, start: str, end: str) -> list[dict]:
     ce = ctx.client("ce", region="us-east-1")
-    resp = ce.get_cost_and_usage(
+    return _cost_and_usage(
+        ce,
         TimePeriod={"Start": start, "End": end},
         Granularity="MONTHLY",
         Metrics=["UnblendedCost"],
         GroupBy=[{"Type": "DIMENSION", "Key": "LINKED_ACCOUNT"}],
     )
-    return resp["ResultsByTime"]
 
 
 @ignore_access_denied(default=dict)
@@ -69,8 +90,9 @@ def savings_plans_coverage(ctx: AwsContext, start: str, end: str) -> dict:
 @ignore_access_denied(default=list)
 def rightsizing_recommendations(ctx: AwsContext, service: str = "AmazonEC2") -> list[dict]:
     ce = ctx.client("ce", region="us-east-1")
-    resp = ce.get_rightsizing_recommendation(Service=service)
-    return resp.get("RightsizingRecommendations", [])
+    return list(
+        paginate(ce, "get_rightsizing_recommendation", "RightsizingRecommendations", Service=service)
+    )
 
 
 @ignore_access_denied(default=dict)
@@ -96,21 +118,32 @@ def reserved_instance_purchase_recommendation(ctx: AwsContext, service: str = "A
 def anomalies(ctx: AwsContext, start: str, end: str) -> list[dict]:
     """Cost Anomaly Detection results, if a monitor is configured."""
     ce = ctx.client("ce", region="us-east-1")
-    return ce.get_anomalies(DateInterval={"StartDate": start, "EndDate": end}).get(
-        "Anomalies", []
+    return list(
+        paginate(ce, "get_anomalies", "Anomalies", DateInterval={"StartDate": start, "EndDate": end})
     )
 
 
 @ignore_access_denied(default=list)
 def compute_optimizer_ec2_recommendations(ctx: AwsContext, region: str) -> list[dict]:
     co = ctx.client("compute-optimizer", region=region)
-    return co.get_ec2_instance_recommendations().get("instanceRecommendations", [])
+    # No botocore paginator; follow nextToken by hand.
+    return list(
+        manual_paginate(
+            co, "get_ec2_instance_recommendations", "instanceRecommendations",
+            token_arg="nextToken", token_field="nextToken",
+        )
+    )
 
 
 @ignore_access_denied(default=list)
 def compute_optimizer_ebs_recommendations(ctx: AwsContext, region: str) -> list[dict]:
     co = ctx.client("compute-optimizer", region=region)
-    return co.get_ebs_volume_recommendations().get("volumeRecommendations", [])
+    return list(
+        manual_paginate(
+            co, "get_ebs_volume_recommendations", "volumeRecommendations",
+            token_arg="nextToken", token_field="nextToken",
+        )
+    )
 
 
 @ignore_access_denied(default=list)

@@ -149,3 +149,15 @@ def test_collect_global_security_assembles_iam_evidence(ctx):
     assert any(u["UserName"] == "carol" for u in out["IamUsers"])
     assert "carol" in out["IamFindings"]["ConsoleUsersWithoutMfa"]
     assert out["IamFindings"]["PasswordPolicySet"] is (out["IamPasswordPolicy"] is not None)
+
+
+def test_key_age_treats_a_timestamp_without_offset_as_utc():
+    """Subtracting a naive timestamp from an aware "now" raises TypeError;
+    a credential report row without an offset must still be aged."""
+    from datetime import datetime, timedelta, timezone
+
+    naive = (datetime.now(timezone.utc) - timedelta(days=200)).replace(tzinfo=None).isoformat()
+    report = [{"user": "legacy", "access_key_1_active": "true", "access_key_1_last_rotated": naive}]
+    (row,) = security.iam_findings(report, None)["AccessKeysToReview"]
+    assert 199 <= row["age_days"] <= 201
+

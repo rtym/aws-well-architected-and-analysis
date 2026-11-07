@@ -2,6 +2,7 @@ import boto3
 from moto import mock_aws
 
 from shared.awslib.collectors import containers
+from tests.stub_helpers import install_stub
 
 
 @mock_aws
@@ -53,3 +54,17 @@ def test_describe_eks_includes_nodegroups_and_fargate_profiles(ctx):
 @mock_aws
 def test_describe_ecs_returns_empty_list_when_no_clusters(ctx):
     assert containers.describe_ecs(ctx, "us-east-1") == []
+
+
+def test_describe_ecs_batches_describe_clusters_by_100(ctx):
+    """DescribeClusters accepts at most 100 ARNs; a region with more ECS
+    clusters made the single call fail."""
+    ecs, stub = install_stub(ctx, "ecs", region="us-east-1")
+    arns = [f"arn:aws:ecs:us-east-1:123456789012:cluster/c{i}" for i in range(101)]
+    stub.add_response("list_clusters", {"clusterArns": arns}, {})
+    include = ["SETTINGS", "STATISTICS"]
+    stub.add_response("describe_clusters", {"clusters": []}, {"clusters": arns[:100], "include": include})
+    stub.add_response("describe_clusters", {"clusters": []}, {"clusters": arns[100:], "include": include})
+
+    assert containers.describe_ecs(ctx, "us-east-1") == []
+    stub.assert_no_pending_responses()

@@ -46,7 +46,8 @@ def collect(ctx, regions: list[str]) -> dict:
             "DefaultSecurityGroupsWithRules": vpc.default_security_groups_with_rules(security_groups),
             "Compute": compute.collect_region_compute(ctx, region),
             "RdsExposure": data_stores.rds_exposure(data_stores.describe_rds_instances(ctx, region)),
-            "PublicRdsSnapshots": data_stores.public_rds_snapshots(ctx, region, rds_snapshots),
+            "PublicRdsSnapshots": data_stores.public_rds_snapshots(ctx, region, rds_snapshots)
+            + data_stores.public_rds_cluster_snapshots(ctx, region),
         }
     data["Global"]["DataStores"] = data_stores.collect_global_data_stores(ctx)
     data["Global"]["AccountPublicAccessBlock"] = security.account_public_access_block(ctx)
@@ -63,12 +64,14 @@ def _standard_name(standards_arn: str) -> str:
     return standards_arn
 
 
-def guardduty_severity_label(score: float) -> str:
-    if score >= 7:
-        return "HIGH"
-    if score >= 4:
-        return "MEDIUM"
-    return "LOW"
+def _port_range(rule: dict) -> str:
+    """"all" for protocol -1 (AWS leaves FromPort/ToPort unset there, which
+    used to render as "None-None"), a single port, or "from-to"."""
+    if rule.get("IpProtocol") == "-1" or rule.get("FromPort") is None:
+        return "all"
+    if rule.get("FromPort") == rule.get("ToPort"):
+        return str(rule.get("FromPort"))
+    return f"{rule.get('FromPort')}-{rule.get('ToPort')}"
 
 
 def build_report(data: dict) -> Report:
@@ -94,6 +97,8 @@ def build_report(data: dict) -> Report:
     ct_lines = [
         f"- **Multi-region trail configured:** {'yes' if ct['HasMultiRegionTrail'] else 'NO -- gap'}",
         f"- **A trail is actively logging:** {'yes' if ct['HasLoggingTrail'] else 'NO -- gap'}",
+        f"- **A multi-region trail is logging (CloudTrail.1):** "
+        f"{'yes' if ct.get('HasLoggingMultiRegionTrail', ct['HasMultiRegionTrail'] and ct['HasLoggingTrail']) else 'NO -- gap'}",
         f"- **Log file validation enabled:** {'yes' if ct['HasLogFileValidation'] else 'no'}",
         f"- **Trails found:** {len(ct['Trails'])}",
     ]
@@ -145,7 +150,7 @@ def build_report(data: dict) -> Report:
         open_sg_total += len(open_sgs)
 
         for f in gd_findings:
-            severity_counts[guardduty_severity_label(f.get("Severity", 0))] += 1
+            severity_counts[security.guardduty_severity_label(f.get("Severity", 0))] += 1
             all_gd_findings.append({**f, "_Region": region})
         for f in sh_findings:
             label = f.get("Severity", {}).get("Label", "INFORMATIONAL")
@@ -194,13 +199,16 @@ def build_report(data: dict) -> Report:
         report.add_section("Security Hub Findings (Active, High/Critical)", findings_table(rows, ["Region", "Severity", "Title", "Resource"]))
 
     if all_gd_findings:
+        # Most severe first across every region, so the 40-row cap drops
+        # the least severe findings rather than whichever region came last.
+        most_severe_first = sorted(all_gd_findings, key=lambda f: f.get("Severity", 0), reverse=True)
         rows = [
             {
                 "Region": f["_Region"],
-                "Severity": guardduty_severity_label(f.get("Severity", 0)),
+                "Severity": security.guardduty_severity_label(f.get("Severity", 0)),
                 "Type": f.get("Type", "?"),
             }
-            for f in all_gd_findings[:40]
+            for f in most_severe_first[:40]
         ]
         report.add_section("GuardDuty Findings", findings_table(rows, ["Region", "Severity", "Type"]))
 
@@ -224,9 +232,19 @@ def build_report(data: dict) -> Report:
     aa_rows = []
     for region, region_data in data["Regions"].items():
         for f in region_data["Security"].get("AccessAnalyzerFindings", []):
-            aa_rows.append({"Region": region, "Resource type": f.get("resourceType", "?"), "Status": f.get("status", "?")})
+            aa_rows.append(
+                {
+                    "Region": region,
+                    "Finding type": f.get("findingType", "ExternalAccess"),
+                    "Resource type": f.get("resourceType", "?"),
+                    "Resource": f.get("resource", "?"),
+                }
+            )
     if aa_rows:
-        report.add_section("IAM Access Analyzer -- Active Findings", findings_table(aa_rows, ["Region", "Resource type", "Status"]))
+        report.add_section(
+            "IAM Access Analyzer -- Active Findings",
+            findings_table(aa_rows, ["Region", "Finding type", "Resource type", "Resource"]),
+        )
 
     if open_sg_total:
         sg_rows = []
@@ -236,7 +254,7 @@ def build_report(data: dict) -> Report:
                     {
                         "Region": region,
                         "Group": sg["GroupId"],
-                        "Port range": f"{sg.get('FromPort')}-{sg.get('ToPort')}",
+                        "Port range": _port_range(sg),
                         "Protocol": sg.get("IpProtocol"),
                         "Open to": ", ".join(sg["OpenRanges"]),
                     }

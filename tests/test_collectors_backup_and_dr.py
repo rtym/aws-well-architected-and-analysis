@@ -2,6 +2,7 @@ import boto3
 from moto import mock_aws
 
 from shared.awslib.collectors import backup, dr
+from tests.stub_helpers import install_stub
 
 
 @mock_aws
@@ -131,7 +132,6 @@ def test_list_recent_jobs_passes_the_state_filter(ctx):
     """moto doesn't implement ListBackupJobs, so stub it -- and pin that the
     ByState filter actually reaches the API: without it the report's
     'recent failed jobs' count would silently include successful jobs."""
-    from tests.stub_helpers import install_stub
 
     bk_client, stub = install_stub(ctx, "backup", region="us-east-1")
     stub.add_response(
@@ -148,7 +148,6 @@ def test_list_recent_jobs_passes_the_state_filter(ctx):
 def test_backup_optional_calls_return_empty_on_access_denied(ctx):
     """list_protected_resources / list_backup_jobs need extra IAM actions a
     minimal read-only policy may omit -- that degrades, never aborts."""
-    from tests.stub_helpers import install_stub
 
     bk_client, stub = install_stub(ctx, "backup", region="us-east-1")
     stub.add_client_error("list_protected_resources", service_error_code="AccessDeniedException")
@@ -156,3 +155,76 @@ def test_backup_optional_calls_return_empty_on_access_denied(ctx):
 
     stub.add_client_error("list_backup_jobs", service_error_code="AccessDeniedException")
     assert backup.list_recent_jobs(ctx, "us-east-1", by_state="FAILED") == []
+
+
+def test_calculated_health_checks_are_listed_without_status(ctx):
+    """GetHealthCheckStatus rejects calculated health checks, and calling it
+    on one aborted the whole DR collection. Calculated checks are the usual
+    building block of DNS failover, so they must be listed, status None."""
+    r53, stub = install_stub(ctx, "route53")
+
+    def check(check_id, kind):
+        return {
+            "Id": check_id,
+            "CallerReference": f"ref-{check_id}",
+            "HealthCheckConfig": {"Type": kind},
+            "HealthCheckVersion": 1,
+        }
+
+    stub.add_response(
+        "list_health_checks",
+        {
+            "HealthChecks": [check("hc-calc", "CALCULATED"), check("hc-https", "HTTPS")],
+            "Marker": "",
+            "IsTruncated": False,
+            "MaxItems": "100",
+        },
+        {},
+    )
+    stub.add_response(
+        "get_health_check_status",
+        {"HealthCheckObservations": [{"Region": "us-east-1", "IPAddress": "192.0.2.1", "StatusReport": {"Status": "Success"}}]},
+        {"HealthCheckId": "hc-https"},
+    )
+
+    checks = dr.list_health_checks(ctx)
+    assert checks[0]["_Status"] is None
+    assert checks[1]["_Status"][0]["Region"] == "us-east-1"
+    stub.assert_no_pending_responses()
+
+
+def test_rds_dr_signals_judges_cluster_members_at_cluster_level():
+    """Aurora and Multi-AZ DB cluster members always report MultiAZ false
+    per instance, so every healthy Aurora member was flagged single-AZ."""
+    instances = [
+        {"DBInstanceIdentifier": "aurora-1", "DBClusterIdentifier": "aurora", "MultiAZ": False},
+        {"DBInstanceIdentifier": "aurora-2", "DBClusterIdentifier": "aurora", "MultiAZ": False},
+        {"DBInstanceIdentifier": "solo", "MultiAZ": False},
+        {"DBInstanceIdentifier": "ha", "MultiAZ": True},
+    ]
+    clusters = [
+        {"DBClusterIdentifier": "aurora", "MultiAZ": True},
+        {"DBClusterIdentifier": "dev-aurora", "MultiAZ": False},
+    ]
+    signals = dr.rds_dr_signals(instances, clusters)
+    assert [i["DBInstanceIdentifier"] for i in signals["SingleAzInstances"]] == ["solo"]
+    assert [c["DBClusterIdentifier"] for c in signals["SingleAzClusters"]] == ["dev-aurora"]
+
+
+def test_collect_region_backup_wires_every_collector_and_derives_copy_plans(monkeypatch, ctx):
+    """The entry point the DR and WA scripts call had no test of its own."""
+    plans = [
+        {"BackupPlanId": "p-copy", "BackupPlanName": "daily", "_Rules": [{"RuleName": "r", "CopyActions": [{"DestinationBackupVaultArn": "arn:vault:dr"}]}]},
+        {"BackupPlanId": "p-local", "BackupPlanName": "local", "_Rules": [{"RuleName": "r"}]},
+    ]
+    monkeypatch.setattr(backup, "list_backup_plans", lambda ctx, region: plans)
+    monkeypatch.setattr(backup, "list_backup_vaults", lambda ctx, region: [{"BackupVaultName": f"v-{region}"}])
+    monkeypatch.setattr(backup, "list_protected_resources", lambda ctx, region: [{"ResourceArn": "arn:r"}])
+    monkeypatch.setattr(backup, "list_recent_jobs", lambda ctx, region, by_state=None: [{"State": by_state}])
+
+    out = backup.collect_region_backup(ctx, "eu-west-1")
+    assert out["Region"] == "eu-west-1"
+    assert out["BackupVaults"] == [{"BackupVaultName": "v-eu-west-1"}]
+    assert out["FailedJobsRecent"] == [{"State": "FAILED"}]
+    assert [p["BackupPlanId"] for p in out["PlansWithCrossRegionCopy"]] == ["p-copy"]
+

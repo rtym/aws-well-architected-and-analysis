@@ -6,19 +6,28 @@ This skill surfaces findings from two services with different native
 severity scales -- normalize them in your write-up rather than presenting
 raw numbers to the user without context.
 
-**GuardDuty** returns a `Severity` float from 0.1-8.9. This skill's
-collector buckets it:
+**GuardDuty** returns a `Severity` float from 1.0 to 10.0. This skill
+buckets it on GuardDuty's documented bands:
 
-- `>= 7.0` -> **HIGH**
+- `9.0 - 10.0` -> **CRITICAL** (attack-sequence findings from GuardDuty
+  Extended Threat Detection: several correlated signals that together
+  indicate an attack in progress or recently completed)
+- `7.0 - 8.9` -> **HIGH**
 - `4.0 - 6.9` -> **MEDIUM**
 - `< 4.0` -> **LOW**
+
+The collector requests only **unarchived** findings, most severe first.
+GuardDuty's API returns archived findings too unless filtered, and
+suppression rules archive findings automatically -- so archived findings
+are noise the account owner already chose to silence.
 
 **Security Hub** returns a `Severity.Label` directly:
 `CRITICAL` / `HIGH` / `MEDIUM` / `LOW` / `INFORMATIONAL`.
 
 The collector only pulls Security Hub findings already filtered to
-`CRITICAL`/`HIGH` and `RecordState: ACTIVE`, `WorkflowStatus: NEW` --
-resolved or suppressed findings won't appear, and MEDIUM/LOW Security Hub
+`CRITICAL`/`HIGH` and `RecordState: ACTIVE`, `WorkflowStatus: NEW` or
+`NOTIFIED` (notified means the owner was told but the issue is still
+open) -- resolved or suppressed findings won't appear, and MEDIUM/LOW Security Hub
 findings are intentionally out of scope for the default scan (there are
 usually too many to be useful signal; note this to the user and offer to
 widen the filter if they want full coverage).
@@ -39,8 +48,13 @@ pattern. The families that matter most in a security review:
 - `Policy:*` -- a policy violation (e.g. root credential usage) rather
   than an active threat -- still worth flagging, different urgency.
 
-Treat any `Trojan:`/`Backdoor:`/`CryptoCurrency:` finding as needing
-immediate escalation regardless of the numeric severity score.
+- `AttackSequence:*` -- a multi-stage attack GuardDuty assembled from
+  correlated signals (always CRITICAL). Read the finding's own timeline
+  and MITRE ATT&CK mapping in the JSON evidence before writing it up.
+
+Treat any `AttackSequence:`/`Trojan:`/`Backdoor:`/`CryptoCurrency:`
+finding as needing immediate escalation regardless of the numeric
+severity score.
 
 ## Security Hub standards in this report
 
@@ -81,7 +95,7 @@ CIS's):
 | Unencrypted EBS volume                 | EC2.3   | MEDIUM             |
 | EBS encryption-by-default off          | EC2.7   | MEDIUM             |
 | Instance allowing IMDSv1               | EC2.8   | HIGH               |
-| Publicly shared RDS snapshot           | RDS.1   | CRITICAL           |
+| Publicly shared RDS snapshot (DB or cluster) | RDS.1 | CRITICAL        |
 | Publicly accessible RDS instance       | RDS.2   | CRITICAL           |
 | RDS storage not encrypted              | RDS.3   | MEDIUM             |
 | Account-level Block Public Access off  | S3.1    | MEDIUM (HIGH with public buckets present) |

@@ -21,6 +21,11 @@ NOT_IN_ORG_ERROR_CODES = {
     "AccessDeniedException",
 }
 
+# AWS attaches this allow-everything SCP to the root, every OU and every
+# account when SCPs are enabled. It restricts nothing, so it never counts
+# as coverage.
+FULL_AWS_ACCESS_POLICY_ID = "p-FullAWSAccess"
+
 
 def is_organizations_member(ctx: AwsContext) -> bool:
     """True if this account belongs to an Organization at all (management
@@ -92,27 +97,93 @@ def securityhub_organization_admin(ctx: AwsContext, region: str) -> dict | None:
     return admins[0] if admins else None
 
 
-def accounts_without_scp_coverage(accounts: list[dict], policies: list[dict]) -> list[dict]:
-    covered_ids = set()
-    for policy in policies:
+def restrictive_scps(policies: list[dict]) -> list[dict]:
+    """Every SCP except AWS's allow-all FullAWSAccess."""
+    return [
+        p
+        for p in policies
+        if p.get("Id") != FULL_AWS_ACCESS_POLICY_ID
+        and not (p.get("AwsManaged") and p.get("Name") == "FullAWSAccess")
+    ]
+
+
+@ignore_access_denied(default=set)
+def ou_descendant_account_ids(ctx: AwsContext, ou_id: str) -> set[str]:
+    """Every account under an OU, including accounts in nested OUs -- an
+    SCP attached to an OU applies to its whole subtree."""
+    org = ctx.client("organizations", region="us-east-1")
+    found: set[str] = set()
+    pending = [ou_id]
+    while pending:
+        parent = pending.pop()
+        found.update(
+            a["Id"] for a in paginate(org, "list_accounts_for_parent", "Accounts", ParentId=parent)
+        )
+        pending.extend(
+            ou["Id"]
+            for ou in paginate(
+                org, "list_organizational_units_for_parent", "OrganizationalUnits", ParentId=parent
+            )
+        )
+    return found
+
+
+def accounts_without_scp_coverage(
+    accounts: list[dict],
+    policies: list[dict],
+    ou_accounts: dict[str, set[str]] | None = None,
+    management_account_id: str | None = None,
+) -> list[dict]:
+    """Member accounts with no restrictive SCP in effect -- neither
+    attached directly nor inherited from the root or any OU above them.
+
+    Counting only direct account attachments was wrong both ways: it
+    missed SCPs attached at the root or an OU (the usual practice), and it
+    counted FullAWSAccess, which AWS attaches to every account by default,
+    so a typical org always looked fully covered. The management account
+    is left out because SCPs never apply to it.
+    """
+    ou_accounts = ou_accounts or {}
+    all_ids = {a.get("Id") for a in accounts}
+    covered: set[str] = set()
+    for policy in restrictive_scps(policies):
         for target in policy.get("_Targets", []):
-            if target.get("Type") == "ACCOUNT":
-                covered_ids.add(target.get("TargetId"))
-    return [a for a in accounts if a.get("Id") not in covered_ids]
+            kind = target.get("Type")
+            if kind == "ACCOUNT":
+                covered.add(target.get("TargetId"))
+            elif kind == "ROOT":
+                covered |= all_ids
+            elif kind == "ORGANIZATIONAL_UNIT":
+                covered |= ou_accounts.get(target.get("TargetId"), set())
+    return [
+        a
+        for a in accounts
+        if a.get("Id") not in covered and a.get("Id") != management_account_id
+    ]
 
 
 def collect_organization_posture(ctx: AwsContext, home_region: str) -> dict:
     if not is_organizations_member(ctx):
         return {"IsOrganizationsMember": False}
 
+    organization = describe_organization(ctx)
     accounts = list_accounts(ctx)
     policies = list_service_control_policies(ctx)
+    ou_targets = {
+        t["TargetId"]
+        for p in restrictive_scps(policies)
+        for t in p.get("_Targets", [])
+        if t.get("Type") == "ORGANIZATIONAL_UNIT"
+    }
+    ou_accounts = {ou: ou_descendant_account_ids(ctx, ou) for ou in sorted(ou_targets)}
     return {
         "IsOrganizationsMember": True,
-        "Organization": describe_organization(ctx),
+        "Organization": organization,
         "Accounts": accounts,
         "ServiceControlPolicies": policies,
-        "AccountsWithoutScpCoverage": accounts_without_scp_coverage(accounts, policies),
+        "AccountsWithoutScpCoverage": accounts_without_scp_coverage(
+            accounts, policies, ou_accounts, (organization or {}).get("MasterAccountId")
+        ),
         "DelegatedAdministrators": list_delegated_administrators(ctx),
         "GuardDutyOrganizationAdmin": guardduty_organization_admin(ctx, home_region),
         "SecurityHubOrganizationAdmin": securityhub_organization_admin(ctx, home_region),
