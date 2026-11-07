@@ -2,9 +2,6 @@
 encryption posture, public snapshots (EBS and RDS), RDS exposure, KMS
 rotation, Lambda function URLs, account-level S3 Block Public Access,
 Inspector/Macie enablement, and default-security-group hygiene."""
-import io
-import zipfile
-
 import boto3
 from moto import mock_aws
 
@@ -110,32 +107,44 @@ def test_kms_keys_without_rotation_propagates_unexpected_errors(ctx):
 
 
 # -------------------------------------------------------- Lambda function URLs
-def _lambda_zip() -> bytes:
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("index.py", "def handler(event, context):\n    return {}\n")
-    return buf.getvalue()
+def test_lambda_urls_without_auth_checks_every_url_config_including_aliases(ctx):
+    """An alias can carry its own function URL. The check used to read only
+    the unqualified URL (GetFunctionUrlConfig), so an open alias URL was
+    missed. ListFunctionUrlConfigs returns every URL per function. (moto
+    doesn't implement it, hence the Stubber.)"""
+    lam, stub = install_stub(ctx, "lambda", region="us-east-1")
+    stub.add_response(
+        "list_functions",
+        {"Functions": [{"FunctionName": "fn-alias-open"}, {"FunctionName": "fn-iam"}, {"FunctionName": "fn-nourl"}]},
+        {},
+    )
 
+    def url_cfg(fn, qualifier, auth):
+        return {
+            "FunctionUrl": f"https://{fn}-{qualifier}.lambda-url.us-east-1.on.aws/",
+            "FunctionArn": f"arn:aws:lambda:us-east-1:123456789012:function:{fn}:{qualifier}",
+            "CreationTime": "2026-01-01T00:00:00Z",
+            "LastModifiedTime": "2026-01-01T00:00:00Z",
+            "AuthType": auth,
+        }
 
-@mock_aws
-def test_lambda_urls_without_auth_flags_only_authtype_none(ctx):
-    iam = boto3.client("iam", region_name="us-east-1")
-    role = iam.create_role(RoleName="fn-role", AssumeRolePolicyDocument="{}")["Role"]["Arn"]
-    lam = boto3.client("lambda", region_name="us-east-1")
-    for name in ("fn-open", "fn-iam", "fn-nourl"):
-        lam.create_function(
-            FunctionName=name,
-            Runtime="python3.12",
-            Role=role,
-            Handler="index.handler",
-            Code={"ZipFile": _lambda_zip()},
-        )
-    lam.create_function_url_config(FunctionName="fn-open", AuthType="NONE")
-    lam.create_function_url_config(FunctionName="fn-iam", AuthType="AWS_IAM")
+    stub.add_response(
+        "list_function_url_configs",
+        {"FunctionUrlConfigs": [url_cfg("fn-alias-open", "live", "NONE")]},
+        {"FunctionName": "fn-alias-open"},
+    )
+    stub.add_response(
+        "list_function_url_configs",
+        {"FunctionUrlConfigs": [url_cfg("fn-iam", "$LATEST", "AWS_IAM")]},
+        {"FunctionName": "fn-iam"},
+    )
+    stub.add_response("list_function_url_configs", {"FunctionUrlConfigs": []}, {"FunctionName": "fn-nourl"})
 
     found = security.lambda_urls_without_auth(ctx, "us-east-1")
-    assert [f["FunctionName"] for f in found] == ["fn-open"]
-    assert found[0]["FunctionUrl"]
+    assert found == [
+        {"FunctionName": "fn-alias-open", "FunctionUrl": "https://fn-alias-open-live.lambda-url.us-east-1.on.aws/"}
+    ]
+    stub.assert_no_pending_responses()
 
 
 # ----------------------------------------------------------------- RDS exposure
@@ -328,3 +337,27 @@ def test_collect_region_security_includes_the_new_exposure_keys(monkeypatch, ctx
     }
     assert out["Inspector2"] == "inspector2_status"
     assert out["EbsEncryptionByDefault"] == "ebs_encryption_by_default"
+
+
+def test_kms_keys_with_imported_or_custom_store_material_are_not_flagged(ctx):
+    """Keys whose material is imported (EXTERNAL) or held in a custom key
+    store can't rotate automatically, so listing them under KMS.4 was a
+    false positive. No GetKeyRotationStatus call may be made for them."""
+    kms, stub = install_stub(ctx, "kms", region="us-east-1")
+    stub.add_response("list_keys", {"Keys": [{"KeyId": "k-imported"}, {"KeyId": "k-hsm"}]}, {})
+    for key_id, origin in (("k-imported", "EXTERNAL"), ("k-hsm", "AWS_CLOUDHSM")):
+        stub.add_response(
+            "describe_key",
+            {
+                "KeyMetadata": {
+                    "KeyId": key_id,
+                    "KeyManager": "CUSTOMER",
+                    "KeyState": "Enabled",
+                    "KeySpec": "SYMMETRIC_DEFAULT",
+                    "Origin": origin,
+                }
+            },
+            {"KeyId": key_id},
+        )
+    assert security.kms_keys_without_rotation(ctx, "us-east-1") == []
+    stub.assert_no_pending_responses()

@@ -76,7 +76,7 @@ def build_report(posture: dict) -> Report:
                 f"- **Feature set:** {org.get('FeatureSet', '?')}",
                 f"- **Member accounts:** {len(accounts)}",
                 f"- **Service Control Policies defined:** {len(policies)}",
-                f"- **Accounts with no direct SCP attachment:** {len(uncovered)}",
+                f"- **Member accounts with no restrictive SCP in effect:** {len(uncovered)}",
             ]
         ),
     )
@@ -92,22 +92,45 @@ def build_report(posture: dict) -> Report:
         rows = [{"Account ID": a.get("Id"), "Name": a.get("Name"), "Email": a.get("Email"), "Status": a.get("Status")} for a in accounts]
         report.add_section("Member Accounts", findings_table(rows, ["Account ID", "Name", "Email", "Status"]))
 
+    coverage_note = (
+        "Coverage counts every SCP except AWS's allow-all FullAWSAccess, "
+        "whether attached to the account itself, to an OU above it, or to the "
+        "root. The management account is not listed: SCPs never apply to it."
+    )
     if uncovered:
         rows = [{"Account ID": a.get("Id"), "Name": a.get("Name")} for a in uncovered]
         report.add_section(
-            "Accounts Without a Directly-Attached SCP",
-            "These accounts have no Service Control Policy attached directly "
-            "to them -- they may still be covered by a policy attached at "
-            "the OU or root level; this check only looks at direct account "
-            "attachments, so treat this as a lead to verify, not a confirmed gap:\n\n"
+            "Accounts With No Restrictive SCP in Effect",
+            "These member accounts run with no guardrail beyond IAM: no SCP "
+            f"restricts what their principals can do. {coverage_note}\n\n"
             + findings_table(rows, ["Account ID", "Name"]),
         )
     else:
-        report.add_section("Accounts Without a Directly-Attached SCP", "Every account has at least one directly-attached SCP.")
+        report.add_section(
+            "Accounts With No Restrictive SCP in Effect",
+            f"Every member account has at least one restrictive SCP in effect. {coverage_note}",
+        )
 
     if policies:
-        rows = [{"Policy": p.get("Name"), "Description": p.get("Description", ""), "Direct account targets": len([t for t in p.get("_Targets", []) if t.get("Type") == "ACCOUNT"])} for p in policies]
-        report.add_section("Service Control Policies", findings_table(rows, ["Policy", "Description", "Direct account targets"]))
+        def _targets(policy: dict, kind: str) -> int:
+            return len([t for t in policy.get("_Targets", []) if t.get("Type") == kind])
+
+        rows = [
+            {
+                "Policy": p.get("Name"),
+                "Description": p.get("Description", ""),
+                "Root": _targets(p, "ROOT"),
+                "OUs": _targets(p, "ORGANIZATIONAL_UNIT"),
+                "Accounts": _targets(p, "ACCOUNT"),
+            }
+            for p in policies
+        ]
+        report.add_section(
+            "Service Control Policies",
+            "Where each policy is attached (an attachment to the root or an OU "
+            "applies to every account beneath it):\n\n"
+            + findings_table(rows, ["Policy", "Description", "Root", "OUs", "Accounts"]),
+        )
 
     if delegated:
         rows = [{"Account ID": d.get("Id"), "Name": d.get("Name"), "Email": d.get("Email")} for d in delegated]

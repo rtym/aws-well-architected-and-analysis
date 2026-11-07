@@ -4,16 +4,22 @@ from __future__ import annotations
 from ..session import AwsContext, ignore_access_denied, paginate
 
 
+# The RDS describes degrade rather than raise: since 1.4.0 the security
+# scan reads them too, and a security-scoped credential without RDS access
+# shouldn't abort a scan that otherwise works.
+@ignore_access_denied(default=list)
 def describe_rds_instances(ctx: AwsContext, region: str) -> list[dict]:
     rds = ctx.client("rds", region=region)
     return list(paginate(rds, "describe_db_instances", "DBInstances"))
 
 
+@ignore_access_denied(default=list)
 def describe_rds_clusters(ctx: AwsContext, region: str) -> list[dict]:
     rds = ctx.client("rds", region=region)
     return list(paginate(rds, "describe_db_clusters", "DBClusters"))
 
 
+@ignore_access_denied(default=list)
 def describe_rds_snapshots(ctx: AwsContext, region: str) -> list[dict]:
     rds = ctx.client("rds", region=region)
     return list(paginate(rds, "describe_db_snapshots", "DBSnapshots", SnapshotType="manual"))
@@ -152,6 +158,29 @@ def public_rds_snapshots(ctx: AwsContext, region: str, snapshots: list[dict]) ->
         attrs = rds.describe_db_snapshot_attributes(DBSnapshotIdentifier=ident)[
             "DBSnapshotAttributesResult"
         ].get("DBSnapshotAttributes", [])
+        for attr in attrs:
+            if attr.get("AttributeName") == "restore" and "all" in attr.get("AttributeValues", []):
+                flagged.append({"DBSnapshotIdentifier": ident, "Engine": snap.get("Engine")})
+                break
+    return flagged
+
+
+@ignore_access_denied(default=list)
+def public_rds_cluster_snapshots(ctx: AwsContext, region: str) -> list[dict]:
+    """Manual Aurora / Multi-AZ DB cluster snapshots shared with "all".
+    FSBP RDS.1 covers cluster snapshots too; checking only DB snapshots
+    missed every Aurora account's exposure."""
+    rds = ctx.client("rds", region=region)
+    flagged = []
+    for snap in paginate(
+        rds, "describe_db_cluster_snapshots", "DBClusterSnapshots", SnapshotType="manual"
+    ):
+        ident = snap.get("DBClusterSnapshotIdentifier")
+        if not ident:
+            continue
+        attrs = rds.describe_db_cluster_snapshot_attributes(DBClusterSnapshotIdentifier=ident)[
+            "DBClusterSnapshotAttributesResult"
+        ].get("DBClusterSnapshotAttributes", [])
         for attr in attrs:
             if attr.get("AttributeName") == "restore" and "all" in attr.get("AttributeValues", []):
                 flagged.append({"DBSnapshotIdentifier": ident, "Engine": snap.get("Engine")})

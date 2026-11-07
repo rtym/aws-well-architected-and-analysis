@@ -115,6 +115,22 @@ def test_venv_launcher_is_executable():
     assert launcher.is_file() and os.access(launcher, os.X_OK)
 
 
+def test_launcher_tries_every_python_the_ci_matrix_tests():
+    """bin/run-skill-script chooses the interpreter for users; CI is what
+    proves a version works. 3.14 passed locally but the launcher never tried
+    it, so a machine with only python3.14 installed was told no suitable
+    Python existed. Newest first, so the best-supported interpreter wins."""
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "tests.yml").read_text())
+    tested = workflow["jobs"]["test"]["strategy"]["matrix"]["python-version"]
+    launcher = (ROOT / "bin" / "run-skill-script").read_text()
+    candidates = re.search(r"for candidate in ([^;]+);", launcher).group(1).split()
+    for version in tested:
+        assert f"python{version}" in candidates
+    versioned = [c for c in candidates if re.fullmatch(r"python3\.\d+", c)]
+    assert versioned == sorted(versioned, key=lambda c: int(c.split(".")[1]), reverse=True)
+    assert candidates[-1] == "python3"
+
+
 def test_plugin_manifest_is_valid_json_with_required_fields():
     manifest_path = ROOT / ".claude-plugin" / "plugin.json"
     manifest = json.loads(manifest_path.read_text())

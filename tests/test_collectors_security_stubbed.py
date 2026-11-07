@@ -2,13 +2,21 @@ from shared.awslib.collectors import security
 from tests.stub_helpers import install_stub
 
 
+# Every list_findings call must exclude archived findings and sort most
+# severe first -- see guardduty_findings().
+GD_LIST_PARAMS = {
+    "FindingCriteria": {"Criterion": {"service.archived": {"Eq": ["false"]}}},
+    "SortCriteria": {"AttributeName": "severity", "OrderBy": "DESC"},
+}
+
+
 def test_guardduty_findings_across_one_detector(ctx):
     gd, stub = install_stub(ctx, "guardduty")
     stub.add_response("list_detectors", {"DetectorIds": ["det-1"]})
     stub.add_response(
         "list_findings",
         {"FindingIds": ["f-1", "f-2"]},
-        expected_params={"DetectorId": "det-1"},
+        expected_params={"DetectorId": "det-1", **GD_LIST_PARAMS},
     )
     base_finding = {
         "AccountId": "123456789012",
@@ -46,12 +54,12 @@ def test_guardduty_findings_paginates_across_pages_and_batches_get_findings(ctx)
     stub.add_response(
         "list_findings",
         {"FindingIds": page1_ids, "NextToken": "tok-1"},
-        expected_params={"DetectorId": "det-1"},
+        expected_params={"DetectorId": "det-1", **GD_LIST_PARAMS},
     )
     stub.add_response(
         "list_findings",
         {"FindingIds": page2_ids},
-        expected_params={"DetectorId": "det-1", "NextToken": "tok-1"},
+        expected_params={"DetectorId": "det-1", "NextToken": "tok-1", **GD_LIST_PARAMS},
     )
     base_finding = {
         "AccountId": "123456789012",
@@ -90,7 +98,7 @@ def test_guardduty_findings_stops_at_max_findings_across_detectors(ctx):
     stub.add_response(
         "list_findings",
         {"FindingIds": [f"f-{i}" for i in range(1, 11)]},
-        expected_params={"DetectorId": "det-1"},
+        expected_params={"DetectorId": "det-1", **GD_LIST_PARAMS},
     )
     base_finding = {
         "AccountId": "123456789012",
@@ -201,27 +209,42 @@ def test_access_analyzer_findings_across_analyzers(ctx):
             ]
         },
     )
+    # ListFindingsV2, not ListFindings: only V2 returns unused-access and
+    # internal-access findings, so V1 silently missed those analyzers.
     stub.add_response(
-        "list_findings",
+        "list_findings_v2",
         {
             "findings": [
                 {
                     "id": "find-1",
+                    "resource": "arn:aws:s3:::shared-bucket",
                     "resourceType": "AWS::S3::Bucket",
-                    "condition": {},
                     "createdAt": "2024-01-01T00:00:00.000Z",
                     "analyzedAt": "2024-01-01T00:00:00.000Z",
                     "updatedAt": "2024-01-01T00:00:00.000Z",
                     "status": "ACTIVE",
                     "resourceOwnerAccount": "123456789012",
-                }
+                    "findingType": "ExternalAccess",
+                },
+                {
+                    "id": "find-2",
+                    "resource": "arn:aws:iam::123456789012:role/old-ci",
+                    "resourceType": "AWS::IAM::Role",
+                    "createdAt": "2024-01-01T00:00:00.000Z",
+                    "analyzedAt": "2024-01-01T00:00:00.000Z",
+                    "updatedAt": "2024-01-01T00:00:00.000Z",
+                    "status": "ACTIVE",
+                    "resourceOwnerAccount": "123456789012",
+                    "findingType": "UnusedIAMRole",
+                },
             ]
         },
+        {"analyzerArn": "arn:analyzer/1", "filter": {"status": {"eq": ["ACTIVE"]}}},
     )
 
     findings = security.access_analyzer_findings(ctx, "us-east-1")
 
-    assert len(findings) == 1
+    assert [f["findingType"] for f in findings] == ["ExternalAccess", "UnusedIAMRole"]
     assert findings[0]["resourceType"] == "AWS::S3::Bucket"
 
 
@@ -287,3 +310,28 @@ def test_securityhub_findings_stop_at_max_findings(ctx):
 
     findings = security.securityhub_findings(ctx, "us-east-1", max_findings=3)
     assert len(findings) == 3
+
+
+def test_securityhub_findings_keeps_notified_findings_open(ctx):
+    """NOTIFIED means the owner was told and the issue is still open; the
+    filter used to request NEW only, hiding every notified finding."""
+    sh, stub = install_stub(ctx, "securityhub")
+    stub.add_response(
+        "get_findings",
+        {"Findings": []},
+        {
+            "Filters": {
+                "SeverityLabel": [
+                    {"Value": "CRITICAL", "Comparison": "EQUALS"},
+                    {"Value": "HIGH", "Comparison": "EQUALS"},
+                ],
+                "RecordState": [{"Value": "ACTIVE", "Comparison": "EQUALS"}],
+                "WorkflowStatus": [
+                    {"Value": "NEW", "Comparison": "EQUALS"},
+                    {"Value": "NOTIFIED", "Comparison": "EQUALS"},
+                ],
+            }
+        },
+    )
+    assert security.securityhub_findings(ctx, "us-east-1") == []
+    stub.assert_no_pending_responses()

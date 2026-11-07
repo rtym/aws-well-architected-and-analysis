@@ -68,7 +68,9 @@ def run_insights_query(
     waited = 0
     while waited < timeout_s:
         resp = logs.get_query_results(queryId=query_id)
-        if resp["status"] in ("Complete", "Failed", "Cancelled"):
+        # Every terminal state; missing "Timeout" made a timed-out query
+        # spin for the full local timeout before returning nothing.
+        if resp["status"] in ("Complete", "Failed", "Cancelled", "Timeout", "Unknown"):
             break
         time.sleep(2)
         waited += 2

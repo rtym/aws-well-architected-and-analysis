@@ -102,8 +102,8 @@ customer-managed policy:
         "securityhub:GetEnabledStandards",
         "securityhub:GetFindings",
         "securityhub:DescribeStandardsControls",
-        "accessanalyzer:ListAnalyzers",
-        "accessanalyzer:ListFindings",
+        "access-analyzer:ListAnalyzers",
+        "access-analyzer:ListFindings",
         "config:DescribeComplianceByConfigRule",
         "config:DescribeConfigurationRecorders",
         "config:DescribeConfigurationRecorderStatus",
@@ -173,6 +173,8 @@ customer-managed policy:
         "organizations:ListPolicies",
         "organizations:ListTargetsForPolicy",
         "organizations:ListDelegatedAdministrators",
+        "organizations:ListAccountsForParent",
+        "organizations:ListOrganizationalUnitsForParent",
         "guardduty:ListOrganizationAdminAccounts",
         "securityhub:ListOrganizationAdminAccounts"
       ],
@@ -195,6 +197,11 @@ Notes on Option B:
 - Cost Explorer (`ce:*`) and Well-Architected Tool APIs are only callable
   from `us-east-1` regardless of which region you're analyzing; the scripts
   already pin those clients to `us-east-1` internally.
+- IAM action prefixes are not always the boto3 client name: IAM Access
+  Analyzer's prefix is `access-analyzer` (the client is `accessanalyzer`),
+  and CloudWatch's is `cloudwatch`. `tests/test_permissions.py` checks
+  every API call the collectors make against this policy, so a missing or
+  misspelled action fails the suite.
 - `s3:GetBucketLocation` is listed explicitly (though the `s3:GetBucket*`
   wildcard above already covers it) because the S3 collector depends on it
   structurally: it resolves each bucket's own region first, then routes that

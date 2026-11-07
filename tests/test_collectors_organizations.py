@@ -174,3 +174,97 @@ def test_collect_organization_posture_wires_every_key(ctx, monkeypatch):
     assert posture["AccountsWithoutScpCoverage"] == [{"Id": "1" * 12}]
     assert posture["GuardDutyOrganizationAdmin"]["_Region"] == "eu-west-1"
     assert posture["SecurityHubOrganizationAdmin"] is None
+
+
+FULL_AWS_ACCESS = {
+    "Id": "p-FullAWSAccess",
+    "Name": "FullAWSAccess",
+    "AwsManaged": True,
+    "_Targets": [
+        {"Type": "ROOT", "TargetId": "r-root"},
+        {"Type": "ACCOUNT", "TargetId": "111111111111"},
+        {"Type": "ACCOUNT", "TargetId": "222222222222"},
+    ],
+}
+ACCOUNTS = [{"Id": "111111111111"}, {"Id": "222222222222"}, {"Id": "999999999999"}]
+
+
+def test_full_aws_access_alone_is_not_coverage():
+    """AWS attaches the allow-all FullAWSAccess to every account by default.
+    Counting it made a typical org look fully covered when no SCP
+    restricted anything."""
+    uncovered = organizations.accounts_without_scp_coverage(ACCOUNTS, [FULL_AWS_ACCESS])
+    assert [a["Id"] for a in uncovered] == ["111111111111", "222222222222", "999999999999"]
+
+
+def test_root_attached_scp_covers_every_member_account():
+    """Only direct account attachments used to count, so an SCP on the root
+    -- the usual way to apply a baseline -- covered nobody."""
+    baseline = {"Id": "p-baseline", "Name": "baseline", "_Targets": [{"Type": "ROOT", "TargetId": "r-root"}]}
+    assert organizations.accounts_without_scp_coverage(ACCOUNTS, [FULL_AWS_ACCESS, baseline]) == []
+
+
+def test_ou_attached_scp_covers_only_that_subtree():
+    workloads = {"Id": "p-workloads", "Name": "workloads", "_Targets": [{"Type": "ORGANIZATIONAL_UNIT", "TargetId": "ou-w"}]}
+    uncovered = organizations.accounts_without_scp_coverage(
+        ACCOUNTS, [workloads], ou_accounts={"ou-w": {"111111111111", "222222222222"}}
+    )
+    assert [a["Id"] for a in uncovered] == ["999999999999"]
+
+
+def test_management_account_is_never_listed_as_uncovered():
+    """SCPs never apply to the management account, so listing it would be a
+    finding nobody can act on."""
+    uncovered = organizations.accounts_without_scp_coverage(
+        ACCOUNTS, [], management_account_id="999999999999"
+    )
+    assert [a["Id"] for a in uncovered] == ["111111111111", "222222222222"]
+
+
+@mock_aws
+def test_ou_scp_coverage_end_to_end_through_nested_ous(ctx, monkeypatch):
+    """An SCP on a parent OU covers accounts in its nested OUs; accounts
+    left at the root stay uncovered; the management account is excluded."""
+    org = boto3.client("organizations", region_name="us-east-1")
+    org.create_organization(FeatureSet="ALL")
+    root = org.list_roots()["Roots"][0]["Id"]
+    workloads = org.create_organizational_unit(ParentId=root, Name="workloads")["OrganizationalUnit"]["Id"]
+    prod = org.create_organizational_unit(ParentId=workloads, Name="prod")["OrganizationalUnit"]["Id"]
+
+    def new_account(name):
+        return org.create_account(Email=f"{name}@example.com", AccountName=name)["CreateAccountStatus"]["AccountId"]
+
+    in_workloads, in_prod, at_root = new_account("app"), new_account("prod"), new_account("sandbox")
+    org.move_account(AccountId=in_workloads, SourceParentId=root, DestinationParentId=workloads)
+    org.move_account(AccountId=in_prod, SourceParentId=root, DestinationParentId=prod)
+
+    assert organizations.ou_descendant_account_ids(ctx, workloads) == {in_workloads, in_prod}
+
+    policy_id = org.create_policy(
+        Content='{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Action":"cloudtrail:StopLogging","Resource":"*"}]}',
+        Description="baseline guardrails",
+        Name="baseline",
+        Type="SERVICE_CONTROL_POLICY",
+    )["Policy"]["PolicySummary"]["Id"]
+    org.attach_policy(PolicyId=policy_id, TargetId=workloads)
+
+    monkeypatch.setattr(organizations, "guardduty_organization_admin", lambda ctx, region: None)
+    monkeypatch.setattr(organizations, "securityhub_organization_admin", lambda ctx, region: None)
+    posture = organizations.collect_organization_posture(ctx, "us-east-1")
+
+    management = posture["Organization"]["MasterAccountId"]
+    uncovered = {a["Id"] for a in posture["AccountsWithoutScpCoverage"]}
+    assert uncovered == {at_root}
+    assert management not in uncovered
+
+
+def test_describe_organization_propagates_unexpected_errors(ctx):
+    """Only "not in an organization" maps to None; throttling is not that."""
+    import pytest
+    from botocore.exceptions import ClientError
+
+    org, stub = install_stub(ctx, "organizations", region="us-east-1")
+    stub.add_client_error("describe_organization", service_error_code="TooManyRequestsException")
+    with pytest.raises(ClientError):
+        organizations.describe_organization(ctx)
+

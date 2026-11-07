@@ -20,12 +20,32 @@ def guardduty_detector_ids(ctx: AwsContext, region: str) -> list[str]:
     return list(paginate(gd, "list_detectors", "DetectorIds"))
 
 
+# ListFindings returns archived findings too unless told otherwise, and
+# suppression rules archive findings automatically -- so without this filter
+# the report would resurface exactly the noise the account owner silenced.
+GUARDDUTY_UNARCHIVED = {"Criterion": {"service.archived": {"Eq": ["false"]}}}
+GUARDDUTY_MOST_SEVERE_FIRST = {"AttributeName": "severity", "OrderBy": "DESC"}
+
+
+def guardduty_severity_label(score: float) -> str:
+    """GuardDuty's documented severity bands: Critical 9.0-10.0 (attack
+    sequences from Extended Threat Detection), High 7.0-8.9, Medium
+    4.0-6.9, Low below 4.0."""
+    if score >= 9:
+        return "CRITICAL"
+    if score >= 7:
+        return "HIGH"
+    if score >= 4:
+        return "MEDIUM"
+    return "LOW"
+
+
 @ignore_access_denied(default=list)
 def guardduty_findings(ctx: AwsContext, region: str, max_findings: int = 200) -> list[dict]:
-    """Paginates `list_findings` fully (up to `max_findings` total across
-    every detector) rather than only the first page -- a detector with
-    more than one page of active findings would otherwise be silently
-    under-reported."""
+    """Unarchived findings, most severe first, paginated fully (up to
+    `max_findings` total across every detector) -- a detector with more
+    than one page of findings would otherwise be silently under-reported,
+    and sorting server-side means the cap drops the least severe ones."""
     gd = ctx.client("guardduty", region=region)
     findings = []
     for detector_id in guardduty_detector_ids(ctx, region):
@@ -33,7 +53,14 @@ def guardduty_findings(ctx: AwsContext, region: str, max_findings: int = 200) ->
         if remaining <= 0:
             break
         finding_ids = []
-        for finding_id in paginate(gd, "list_findings", "FindingIds", DetectorId=detector_id):
+        for finding_id in paginate(
+            gd,
+            "list_findings",
+            "FindingIds",
+            DetectorId=detector_id,
+            FindingCriteria=GUARDDUTY_UNARCHIVED,
+            SortCriteria=GUARDDUTY_MOST_SEVERE_FIRST,
+        ):
             finding_ids.append(finding_id)
             if len(finding_ids) >= remaining:
                 break
@@ -68,7 +95,12 @@ def securityhub_findings(
     filters = {
         "SeverityLabel": [{"Value": s, "Comparison": "EQUALS"} for s in severity_labels],
         "RecordState": [{"Value": "ACTIVE", "Comparison": "EQUALS"}],
-        "WorkflowStatus": [{"Value": "NEW", "Comparison": "EQUALS"}],
+        # NOTIFIED means "owner told, not yet fixed" -- still open. Only
+        # RESOLVED and SUPPRESSED are closed states.
+        "WorkflowStatus": [
+            {"Value": "NEW", "Comparison": "EQUALS"},
+            {"Value": "NOTIFIED", "Comparison": "EQUALS"},
+        ],
     }
     findings = []
     for finding in paginate(sh, "get_findings", "Findings", Filters=filters):
@@ -80,7 +112,9 @@ def securityhub_findings(
 
 @ignore_access_denied(default=list)
 def securityhub_standards_summary(ctx: AwsContext, region: str) -> list[dict]:
-    """Pass/fail control counts per enabled standard (CIS, FSBP, PCI, etc.)."""
+    """Enabled vs. total control counts per subscribed standard (CIS,
+    FSBP, PCI, etc.). This measures how much of a standard is switched
+    on, not how many controls pass -- pass/fail lives in the findings."""
     sh = ctx.client("securityhub", region=region)
     subs = sh.get_enabled_standards().get("StandardsSubscriptions", [])
     summaries = []
@@ -153,6 +187,8 @@ def _key_age_days(last_rotated: str) -> int | None:
         rotated = datetime.fromisoformat(last_rotated)
     except ValueError:
         return None
+    if rotated.tzinfo is None:
+        rotated = rotated.replace(tzinfo=timezone.utc)
     return (datetime.now(timezone.utc) - rotated).days
 
 
@@ -195,6 +231,10 @@ def iam_findings(
 # --------------------------------------------------------------- IAM Access Analyzer
 @ignore_access_denied(default=list)
 def access_analyzer_findings(ctx: AwsContext, region: str) -> list[dict]:
+    """Active findings from every analyzer in the region. Uses
+    ListFindingsV2: the original ListFindings only covers external-access
+    analyzers, while unused-access and internal-access findings are
+    available only through V2 (same IAM action, access-analyzer:ListFindings)."""
     aa = ctx.client("accessanalyzer", region=region)
     analyzers = list(paginate(aa, "list_analyzers", "analyzers"))
     findings = []
@@ -202,7 +242,7 @@ def access_analyzer_findings(ctx: AwsContext, region: str) -> list[dict]:
         findings.extend(
             paginate(
                 aa,
-                "list_findings",
+                "list_findings_v2",
                 "findings",
                 analyzerArn=analyzer["arn"],
                 filter={"status": {"eq": ["ACTIVE"]}},
@@ -248,8 +288,9 @@ def public_ebs_snapshots(ctx: AwsContext, region: str) -> list[dict]:
 @ignore_access_denied(default=list)
 def kms_keys_without_rotation(ctx: AwsContext, region: str) -> list[dict]:
     """Enabled, customer-managed symmetric KMS keys with automatic rotation
-    off (FSBP KMS.4). AWS-managed keys rotate automatically and asymmetric
-    keys can't auto-rotate, so neither is listed."""
+    off (FSBP KMS.4). AWS-managed keys rotate automatically; asymmetric
+    keys, and keys whose material is imported or held in a custom key
+    store, can't auto-rotate -- none of those are listed."""
     kms = ctx.client("kms", region=region)
     flagged = []
     for key in paginate(kms, "list_keys", "Keys"):
@@ -258,6 +299,8 @@ def kms_keys_without_rotation(ctx: AwsContext, region: str) -> list[dict]:
             if meta.get("KeyManager") != "CUSTOMER" or meta.get("KeyState") != "Enabled":
                 continue
             if meta.get("KeySpec", "SYMMETRIC_DEFAULT") != "SYMMETRIC_DEFAULT":
+                continue
+            if meta.get("Origin", "AWS_KMS") != "AWS_KMS":
                 continue
             rotation = kms.get_key_rotation_status(KeyId=key["KeyId"])
             if not rotation.get("KeyRotationEnabled"):
@@ -278,18 +321,18 @@ def kms_keys_without_rotation(ctx: AwsContext, region: str) -> list[dict]:
 @ignore_access_denied(default=list)
 def lambda_urls_without_auth(ctx: AwsContext, region: str) -> list[dict]:
     """Lambda function URLs with AuthType NONE -- callable by anyone on the
-    internet without signed requests."""
+    internet without signed requests. Lists every URL config per function,
+    because an alias can carry its own URL separate from the function's."""
     lam = ctx.client("lambda", region=region)
     flagged = []
     for fn in paginate(lam, "list_functions", "Functions"):
-        try:
-            cfg = lam.get_function_url_config(FunctionName=fn["FunctionName"])
-        except lam.exceptions.ResourceNotFoundException:
-            continue
-        if cfg.get("AuthType") == "NONE":
-            flagged.append(
-                {"FunctionName": fn["FunctionName"], "FunctionUrl": cfg.get("FunctionUrl")}
-            )
+        for cfg in paginate(
+            lam, "list_function_url_configs", "FunctionUrlConfigs", FunctionName=fn["FunctionName"]
+        ):
+            if cfg.get("AuthType") == "NONE":
+                flagged.append(
+                    {"FunctionName": fn["FunctionName"], "FunctionUrl": cfg.get("FunctionUrl")}
+                )
     return flagged
 
 

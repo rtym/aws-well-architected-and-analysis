@@ -73,11 +73,15 @@ Organizations itself is global.
   standalone account -- don't treat it as an error, and don't recommend
   joining an Organization unless the user is actually asking about
   multi-account governance.
-- **"Accounts without a directly-attached SCP"** is a lead to verify, not
-  a confirmed gap -- the collector only checks direct account-level policy
-  attachments; an account can still be covered by a policy attached at its
-  OU or the root. Say this explicitly and offer to check OU-level
-  attachments if the user wants that level of confirmation.
+- **"Accounts with no restrictive SCP in effect"** is computed from the
+  full inheritance path: an SCP attached to the account, to any OU above
+  it (nested OUs included), or to the root counts as coverage. AWS's
+  allow-all `FullAWSAccess` never counts, because it restricts nothing, and
+  the management account is never listed, because SCPs don't apply to it.
+  An account on this list has no organizational guardrail at all -- state
+  that as a gap. What the check can't tell you is whether the SCPs that
+  *are* in effect are meaningful; read the policy names and descriptions
+  in the Service Control Policies table before calling coverage adequate.
 - **No GuardDuty/Security Hub delegated administrator** means every member
   account is on its own for enabling and configuring those services --
   this is usually worth flagging even if individual accounts look fine
@@ -100,7 +104,8 @@ rather than an isolated one-account oversight.
 
 1. The report states plainly, in the first section, whether this account
    is or isn't an Organizations member -- never buries that.
-2. "Without a directly-attached SCP" findings are phrased as something to
-   verify against OU/root attachments, not asserted as gaps.
+2. "No restrictive SCP in effect" findings are reported as gaps; accounts
+   that *are* covered are not assumed well-governed until the in-effect
+   policies have been read.
 3. GuardDuty and Security Hub delegated-admin status are reported
    independently -- one being centrally managed doesn't imply the other is.
