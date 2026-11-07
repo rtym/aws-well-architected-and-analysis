@@ -4,9 +4,8 @@
 
 - **SCPs attached at the OU level**, not scattered per-account -- easier to
   reason about and audit than hundreds of individual account attachments.
-  A large number of "accounts without a directly-attached SCP" is *not*
-  automatically a problem if OU-level policies cover them; it's only a
-  problem if nothing covers them at any level.
+  The report's coverage check follows inheritance (root, then each OU down
+  to the account), so OU-level attachments count as coverage.
 - **A dedicated security-tooling delegated administrator account** (often
   called "Security" or "Audit" in AWS's multi-account guidance) registered
   as the GuardDuty and Security Hub administrator, so every member account
@@ -26,8 +25,8 @@
   detection coverage depends on every individual account team remembering
   to turn these on, which reliably degrades over time as new accounts are
   created.
-- Accounts with no SCP coverage at any level (verify beyond this skill's
-  direct-attachment check before asserting this as confirmed).
+- Accounts with no restrictive SCP in effect at any level -- the report
+  lists them directly; each one has no guardrail beyond its own IAM.
 - A very large, flat SCP structure (e.g. the same one policy attached to
   every account individually rather than at the root/OU) -- a maintenance
   and drift risk, not a security gap per se, but worth mentioning.

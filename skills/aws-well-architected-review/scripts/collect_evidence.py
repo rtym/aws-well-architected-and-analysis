@@ -190,6 +190,7 @@ def build_report(evidence: dict, pillars: list[str]) -> Report:
                 [
                     f"- Multi-region trail configured: {ct.get('HasMultiRegionTrail')}",
                     f"- A trail is actively logging: {ct.get('HasLoggingTrail')}",
+                    f"- A multi-region trail is logging: {ct.get('HasLoggingMultiRegionTrail')}",
                     f"- Log file validation enabled: {ct.get('HasLogFileValidation')}",
                 ]
             ),

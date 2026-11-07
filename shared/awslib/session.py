@@ -24,6 +24,7 @@ class AwsContext:
     region: str | None = None
     _session: boto3.Session | None = field(default=None, repr=False, compare=False)
     _client_cache: dict = field(default_factory=dict, repr=False, compare=False)
+    _account_id: str | None = field(default=None, repr=False, compare=False)
 
     @property
     def session(self) -> boto3.Session:
@@ -40,7 +41,11 @@ class AwsContext:
         return self._client_cache[key]
 
     def account_id(self) -> str:
-        return self.client("sts").get_caller_identity()["Account"]
+        # Several per-region collectors need the account ID; one STS call
+        # per run is enough.
+        if self._account_id is None:
+            self._account_id = self.client("sts").get_caller_identity()["Account"]
+        return self._account_id
 
     def enabled_regions(self) -> list[str]:
         """Regions enabled for this account (opt-in regions included)."""

@@ -119,3 +119,17 @@ def test_manual_paginate_empty_result_key_yields_nothing(ctx):
     stub.add_response("list_workloads", {"WorkloadSummaries": []})
 
     assert list(manual_paginate(wa, "list_workloads", "WorkloadSummaries")) == []
+
+
+def test_account_id_is_fetched_once_per_context(ctx):
+    """Per-region collectors (Inspector status, account-level S3 Block Public
+    Access) each need the account ID; it cost one STS call per region. A
+    second STS call here would hit an empty Stubber queue and raise."""
+    sts, stub = install_stub(ctx, "sts")
+    stub.add_response(
+        "get_caller_identity",
+        {"Account": "123456789012", "Arn": "arn:aws:iam::123456789012:user/t", "UserId": "AIDA1"},
+    )
+    assert ctx.account_id() == "123456789012"
+    assert ctx.account_id() == "123456789012"
+    stub.assert_no_pending_responses()

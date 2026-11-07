@@ -46,10 +46,24 @@ def describe_load_balancers_v2(ctx: AwsContext, region: str) -> list[dict]:
     return lbs
 
 
+# ListCertificates returns only RSA_1024 and RSA_2048 certificates unless
+# asked for the others -- ECDSA and larger RSA certificates were silently
+# skipped by the expiry check.
+ACM_ALL_KEY_TYPES = [
+    "RSA_1024", "RSA_2048", "RSA_3072", "RSA_4096",
+    "EC_prime256v1", "EC_secp384r1", "EC_secp521r1",
+]
+
+
 @ignore_access_denied(default=list)
 def describe_acm_certificates(ctx: AwsContext, region: str) -> list[dict]:
     acm = ctx.client("acm", region=region)
-    summaries = list(paginate(acm, "list_certificates", "CertificateSummaryList"))
+    summaries = list(
+        paginate(
+            acm, "list_certificates", "CertificateSummaryList",
+            Includes={"keyTypes": ACM_ALL_KEY_TYPES},
+        )
+    )
     certs = []
     for summary in summaries:
         certs.append(acm.describe_certificate(CertificateArn=summary["CertificateArn"])["Certificate"])
@@ -70,21 +84,39 @@ def unassociated_eips(addresses: list[dict]) -> list[dict]:
 
 
 def instances_allowing_imdsv1(instances: list[dict]) -> list[dict]:
-    """SEC06 evidence: instances where IMDSv2 is not enforced
+    """SEC06 evidence (FSBP EC2.8): instances where IMDSv2 is not enforced
     (HttpTokens != 'required'), leaving them exposed to SSRF-based
-    credential theft via the instance metadata service."""
+    credential theft via the instance metadata service. Instances with the
+    metadata endpoint switched off entirely aren't exposed, and terminated
+    instances (still listed for about an hour) no longer exist."""
     return [
         i
         for i in instances
         if i.get("MetadataOptions", {}).get("HttpTokens") != "required"
+        and i.get("MetadataOptions", {}).get("HttpEndpoint") != "disabled"
+        and i.get("State", {}).get("Name") not in ("terminated", "shutting-down")
     ]
 
 
+def _redirects_to_https(listener: dict) -> bool:
+    """An HTTP listener whose every default action redirects to HTTPS is
+    the recommended setup (FSBP ELB.1), not a plaintext exposure."""
+    actions = listener.get("DefaultActions") or []
+    return bool(actions) and all(
+        a.get("Type") == "redirect"
+        and (a.get("RedirectConfig") or {}).get("Protocol") == "HTTPS"
+        for a in actions
+    )
+
+
 def plaintext_load_balancer_listeners(load_balancers: list[dict]) -> list[dict]:
-    """SEC09 evidence: ALB/NLB listeners on HTTP/TCP instead of HTTPS/TLS."""
+    """SEC09 evidence: ALB/NLB listeners on HTTP/TCP instead of HTTPS/TLS,
+    excluding HTTP listeners that only redirect to HTTPS."""
     findings = []
     for lb in load_balancers:
         for listener in lb.get("_Listeners", []):
+            if listener.get("Protocol") == "HTTP" and _redirects_to_https(listener):
+                continue
             if listener.get("Protocol") in ("HTTP", "TCP"):
                 findings.append(
                     {

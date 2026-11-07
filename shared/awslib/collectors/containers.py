@@ -9,9 +9,14 @@ def describe_ecs(ctx: AwsContext, region: str) -> list[dict]:
     clusters_arns = list(paginate(ecs, "list_clusters", "clusterArns"))
     if not clusters_arns:
         return []
-    clusters = ecs.describe_clusters(
-        clusters=clusters_arns, include=["SETTINGS", "STATISTICS"]
-    )["clusters"]
+    clusters = []
+    # DescribeClusters accepts at most 100 ARNs per call.
+    for i in range(0, len(clusters_arns), 100):
+        clusters.extend(
+            ecs.describe_clusters(
+                clusters=clusters_arns[i : i + 100], include=["SETTINGS", "STATISTICS"]
+            )["clusters"]
+        )
     for cluster in clusters:
         service_arns = list(
             paginate(ecs, "list_services", "serviceArns", cluster=cluster["clusterArn"])

@@ -89,3 +89,17 @@ def test_run_insights_query_polls_until_complete(ctx, monkeypatch):
 
     assert rows == [{"srcAddr": "10.0.0.5", "totalBytes": "99"}]
     stub.assert_no_pending_responses()
+
+
+def test_run_insights_query_stops_on_timeout_status(ctx, monkeypatch):
+    """"Timeout" is a terminal query state but wasn't in the stop list, so a
+    timed-out query kept polling for the full local timeout."""
+    logs, stub = install_stub(ctx, "logs", region="us-east-1")
+    stub.add_response("start_query", {"queryId": "q-1"})
+    stub.add_response("get_query_results", {"status": "Timeout", "results": []}, {"queryId": "q-1"})
+    sleeps = []
+    monkeypatch.setattr(network_traffic.time, "sleep", sleeps.append)
+
+    assert network_traffic.run_insights_query(ctx, "us-east-1", "flow-logs", "stats count(*)", 0, 60) == []
+    assert sleeps == []
+    stub.assert_no_pending_responses()

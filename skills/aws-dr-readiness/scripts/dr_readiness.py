@@ -100,17 +100,32 @@ def build_report(data: dict) -> Report:
     )
 
     rds = summary["Rds"]
-    if rds["SingleAzInstances"] or rds["InstancesWithReadReplicas"] or rds["CrossRegionOrGlobalClusters"]:
+    single_az_clusters = rds.get("SingleAzClusters", [])
+    if rds["SingleAzInstances"] or single_az_clusters or rds["InstancesWithReadReplicas"] or rds["CrossRegionOrGlobalClusters"]:
         chart_uri = charts.bar_chart(
-            ["Single-AZ", "With read replicas", "Cross-region/global clusters"],
-            [len(rds["SingleAzInstances"]), len(rds["InstancesWithReadReplicas"]), len(rds["CrossRegionOrGlobalClusters"])],
+            ["Single-AZ instances", "Single-AZ clusters", "With read replicas", "Cross-region/global clusters"],
+            [
+                len(rds["SingleAzInstances"]),
+                len(single_az_clusters),
+                len(rds["InstancesWithReadReplicas"]),
+                len(rds["CrossRegionOrGlobalClusters"]),
+            ],
             title="RDS DR posture",
             ylabel="Count",
         )
-        report.add_section("RDS Disaster Recovery Signals", f"![RDS DR posture]({chart_uri})")
+        report.add_section(
+            "RDS Disaster Recovery Signals",
+            f"![RDS DR posture]({chart_uri})\n\n"
+            "Instances that belong to an Aurora or Multi-AZ DB cluster are judged "
+            "at the cluster level: a cluster counts as Multi-AZ when its instances "
+            "span more than one Availability Zone.",
+        )
         if rds["SingleAzInstances"]:
             rows = [{"DB instance": i.get("DBInstanceIdentifier")} for i in rds["SingleAzInstances"]]
             report.add_section("RDS Instances Without Multi-AZ", findings_table(rows, ["DB instance"]))
+        if single_az_clusters:
+            rows = [{"DB cluster": c.get("DBClusterIdentifier"), "Engine": c.get("Engine")} for c in single_az_clusters]
+            report.add_section("RDS Clusters in a Single Availability Zone", findings_table(rows, ["DB cluster", "Engine"]))
     else:
         report.add_section("RDS Disaster Recovery Signals", "No RDS instances found in the scanned region(s).")
 

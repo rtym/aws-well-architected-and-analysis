@@ -1,9 +1,9 @@
 -r requirements.txt
-pytest>=8.0
+pytest>=9.2.0
 moto[ec2,ecs,eks,rds,s3,iam,sts,elbv2]>=5.2.5
 # Used by tests/test_skill_integrity.py to parse SKILL.md frontmatter.
 # Pinned explicitly rather than relied on transitively via moto.
 PyYAML>=6.0.3
-ruff>=0.17.3
+ruff>=0.17.4
 # For `make cov` -- line coverage over shared/ and skills/.
 pytest-cov>=7.1.0

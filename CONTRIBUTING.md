@@ -29,6 +29,9 @@ to confirm with the user first. If you ever add a second mutating call,
 hold it to the same three conditions.
 
 If you add an API call, add its IAM action to `PERMISSIONS.md`'s policy.
+`tests/test_permissions.py` scans every collector call and fails if the
+policy doesn't grant it. Use the IAM prefix, which is not always the
+boto3 client name (`access-analyzer`, not `accessanalyzer`).
 
 ## 2. The HTML-escaping contract
 
@@ -105,8 +108,12 @@ moto 5.x these are *not* implemented and need `botocore.stub.Stubber` (see
 `tests/stub_helpers.py`): Security Hub `GetEnabledStandards` /
 `GetFindings` / `DescribeStandardsControls`, GuardDuty `ListFindings` /
 `GetFindings`, Access Analyzer, AWS Config compliance, Service Quotas,
-Well-Architected Tool, and most Cost Explorer operations beyond
-`GetCostAndUsage`.
+Well-Architected Tool, most Cost Explorer operations beyond
+`GetCostAndUsage`, Lambda `ListFunctionUrlConfigs`, and Inspector
+`BatchGetAccountStatus`. moto also ignores some request filters (EC2
+`DescribeSnapshots` ignores `OwnerIds`/`RestorableByUserIds`); when a
+filter is the behavior under test, pin it with `Stubber`'s
+`expected_params` instead.
 
 `Stubber` validates responses against the real botocore schema, so a stub
 must include **every required field** of the response shape -- not just

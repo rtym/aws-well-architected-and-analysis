@@ -300,6 +300,8 @@ def test_optional_ce_collector_list_covers_every_ce_call_in_cost_module():
     DataUnavailableException handling is tested."""
     source = Path(cost.__file__).read_text()
     called = set(re.findall(r"\bce\.(get_\w+)\(", source))
+    # Paginated calls name the operation as a string instead.
+    called |= set(re.findall(r"paginate\(\s*ce,\s*\"(get_\w+)\"", source))
     core = {"get_cost_and_usage"}  # undecorated on purpose -- see below
     assert called - core == {op for op, _, _ in CE_OPTIONAL_COLLECTORS}
 
@@ -470,3 +472,89 @@ def test_trusted_advisor_returns_empty_without_support_plan(ctx):
     stub.add_client_error("describe_trusted_advisor_checks", service_error_code="SubscriptionRequiredException")
 
     assert cost.trusted_advisor_cost_checks(ctx) == []
+
+
+def _cost_group(service: str, amount: str) -> dict:
+    return {"Keys": [service], "Metrics": {"UnblendedCost": {"Amount": amount, "Unit": "USD"}}}
+
+
+def test_cost_and_usage_follows_page_tokens_and_merges_split_periods(ctx):
+    """GetCostAndUsage has no botocore paginator and only the first page
+    was read. A page boundary can also fall inside one period, repeating
+    its TimePeriod on the next page; the groups must merge, not duplicate
+    the month."""
+    ce_client, stub = install_stub(ctx, "ce", region="us-east-1")
+    params = {
+        "TimePeriod": {"Start": "2024-01-01", "End": "2024-03-01"},
+        "Granularity": "MONTHLY",
+        "Metrics": ["UnblendedCost", "UsageQuantity"],
+        "GroupBy": [{"Type": "DIMENSION", "Key": "SERVICE"}],
+    }
+    jan = {"Start": "2024-01-01", "End": "2024-02-01"}
+    feb = {"Start": "2024-02-01", "End": "2024-03-01"}
+    stub.add_response(
+        "get_cost_and_usage",
+        {"ResultsByTime": [{"TimePeriod": jan, "Groups": [_cost_group("EC2", "10")]}], "NextPageToken": "p2"},
+        params,
+    )
+    stub.add_response(
+        "get_cost_and_usage",
+        {
+            "ResultsByTime": [
+                {"TimePeriod": jan, "Groups": [_cost_group("S3", "2")]},
+                {"TimePeriod": feb, "Groups": [_cost_group("EC2", "11")]},
+            ]
+        },
+        {**params, "NextPageToken": "p2"},
+    )
+
+    periods = cost.cost_and_usage_by_service(ctx, "2024-01-01", "2024-03-01")
+    assert [p["TimePeriod"]["Start"] for p in periods] == ["2024-01-01", "2024-02-01"]
+    assert [g["Keys"][0] for g in periods[0]["Groups"]] == ["EC2", "S3"]
+    stub.assert_no_pending_responses()
+
+
+def test_rightsizing_and_anomalies_read_every_page(ctx):
+    """Both operations have botocore paginators but were called once, so
+    accounts with more than one page of results were truncated."""
+    ce_client, stub = install_stub(ctx, "ce", region="us-east-1")
+    stub.add_response(
+        "get_rightsizing_recommendation",
+        {"RightsizingRecommendations": [{"AccountId": "111111111111"}], "NextPageToken": "t"},
+        {"Service": "AmazonEC2"},
+    )
+    stub.add_response(
+        "get_rightsizing_recommendation",
+        {"RightsizingRecommendations": [{"AccountId": "222222222222"}]},
+        {"Service": "AmazonEC2", "NextPageToken": "t"},
+    )
+    assert [r["AccountId"] for r in cost.rightsizing_recommendations(ctx)] == ["111111111111", "222222222222"]
+
+    def anomaly(anomaly_id):
+        return {
+            "AnomalyId": anomaly_id,
+            "Impact": {"MaxImpact": 1.0},
+            "MonitorArn": "arn:aws:ce::123456789012:anomalymonitor/m",
+            "AnomalyScore": {"MaxScore": 1.0, "CurrentScore": 1.0},
+        }
+
+    interval = {"DateInterval": {"StartDate": "2024-01-01", "EndDate": "2024-02-01"}}
+    stub.add_response("get_anomalies", {"Anomalies": [anomaly("a-1")], "NextPageToken": "n"}, interval)
+    stub.add_response("get_anomalies", {"Anomalies": [anomaly("a-2")]}, {**interval, "NextPageToken": "n"})
+    assert [a["AnomalyId"] for a in cost.anomalies(ctx, "2024-01-01", "2024-02-01")] == ["a-1", "a-2"]
+    stub.assert_no_pending_responses()
+
+
+def test_compute_optimizer_recommendations_follow_next_token(ctx):
+    """No botocore paginator exists for these; only the first page was read."""
+    co, stub = install_stub(ctx, "compute-optimizer", region="us-east-1")
+    stub.add_response("get_ec2_instance_recommendations", {"instanceRecommendations": [{"instanceArn": "i-1"}], "nextToken": "n"}, {})
+    stub.add_response("get_ec2_instance_recommendations", {"instanceRecommendations": [{"instanceArn": "i-2"}]}, {"nextToken": "n"})
+    stub.add_response("get_ebs_volume_recommendations", {"volumeRecommendations": [{"volumeArn": "v-1"}], "nextToken": "m"}, {})
+    stub.add_response("get_ebs_volume_recommendations", {"volumeRecommendations": [{"volumeArn": "v-2"}]}, {"nextToken": "m"})
+
+    ec2_recs = cost.compute_optimizer_ec2_recommendations(ctx, "us-east-1")
+    ebs_recs = cost.compute_optimizer_ebs_recommendations(ctx, "us-east-1")
+    assert [r["instanceArn"] for r in ec2_recs] == ["i-1", "i-2"]
+    assert [r["volumeArn"] for r in ebs_recs] == ["v-1", "v-2"]
+    stub.assert_no_pending_responses()

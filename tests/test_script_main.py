@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import runpy
 import sys
 from pathlib import Path
 
@@ -306,3 +307,18 @@ def test_main_reports_written_paths_on_stdout(
     out = capsys.readouterr().out
     assert basename in out
     assert str(tmp_path) in out
+
+
+@pytest.mark.parametrize(
+    "script", sorted((ROOT / "skills").glob("*/scripts/*.py")), ids=lambda p: p.stem
+)
+def test_script_runs_as_main_and_reaches_main(script, monkeypatch, capsys):
+    """Each script's `if __name__ == "__main__"` guard has to reach main().
+    CI's script-help job checks this in a subprocess, which line coverage
+    can't see; this runs the same --help path in-process (no AWS calls)."""
+    monkeypatch.setattr(sys, "argv", [str(script), "--help"])
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(script), run_name="__main__")
+    assert exc.value.code == 0
+    assert "usage:" in capsys.readouterr().out
+

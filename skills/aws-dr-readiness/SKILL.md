@@ -66,8 +66,12 @@ and HTML reports are already written -- rerun with `--formats md,html` or
 tell the user how to enable PDF.
 
 This produces: AWS Backup plan/vault/cross-region-copy coverage, an RDS
-DR-signal chart (single-AZ vs. read-replicas vs. cross-region/global
-clusters), S3 replication status, and Route 53 health check inventory.
+DR-signal chart (single-AZ instances and clusters vs. read-replicas vs.
+cross-region/global clusters), S3 replication status, and Route 53 health
+check inventory. Aurora and Multi-AZ DB cluster members are judged at the
+cluster level, since their instance-level Multi-AZ flag is always false.
+Calculated health checks are listed without a status: Route 53's status
+API doesn't support them, so check them in the console or CloudWatch.
 
 ### Step 2 -- Map evidence to a DR tier, per workload if the user can identify them
 

@@ -20,6 +20,7 @@ sys.path.insert(0, str(PLUGIN_ROOT))
 
 from shared.awslib.cli import base_parser, formats_tuple, make_context  # noqa: E402
 from shared.awslib.collectors import network_traffic as nt  # noqa: E402
+from shared.awslib.collectors.security import guardduty_severity_label  # noqa: E402
 from shared.reporting import charts, jsonutil  # noqa: E402
 from shared.reporting.report import Report, escape_text, findings_table, severity_legend  # noqa: E402
 
@@ -112,7 +113,7 @@ def build_report(data: dict, region: str, log_group: str) -> Report:
     network_findings = data["NetworkFindings"]
     if network_findings:
         rows = [
-            {"Type": f.get("Type", "?"), "Severity": _severity_label(f.get("Severity", 0)), "Resource": f.get("Resource", {}).get("ResourceType", "?")}
+            {"Type": f.get("Type", "?"), "Severity": guardduty_severity_label(f.get("Severity", 0)), "Resource": f.get("Resource", {}).get("ResourceType", "?")}
             for f in network_findings[:40]
         ]
         legend = severity_legend({r["Severity"] for r in rows})
@@ -124,14 +125,6 @@ def build_report(data: dict, region: str, log_group: str) -> Report:
         report.add_section("GuardDuty Network-Related Findings", "No active Recon/UnauthorizedAccess/Trojan/Backdoor findings.")
 
     return report
-
-
-def _severity_label(score: float) -> str:
-    if score >= 7:
-        return "HIGH"
-    if score >= 4:
-        return "MEDIUM"
-    return "LOW"
 
 
 def main(argv=None) -> int:
