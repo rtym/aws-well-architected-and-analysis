@@ -40,7 +40,7 @@ def test_every_skill_directory_has_a_skill_md():
 def test_expected_skill_count():
     """Guards against a skill being accidentally deleted or an unintended
     stray directory appearing under skills/."""
-    assert len(SKILL_FILES) == 9, [p.parent.name for p in SKILL_FILES]
+    assert len(SKILL_FILES) == 8, [p.parent.name for p in SKILL_FILES]
 
 
 @pytest.mark.parametrize("skill_md", SKILL_FILES, ids=lambda p: p.parent.name)
@@ -161,20 +161,17 @@ def test_skill_references_directory_has_no_orphans(skill_md):
     assert not orphans, f"{skill_md} never references: {orphans}"
 
 
-DIAGRAM_SKILLS = ("aws-architecture-discovery", "aws-lucid-diagrams")
-DIAGRAM_CONVENTIONS = "skills/aws-lucid-diagrams/references/diagram-conventions.md"
+DIAGRAM_CONVENTIONS = "skills/aws-architecture-discovery/references/diagram-conventions.md"
 
 
-@pytest.mark.parametrize("skill_name", DIAGRAM_SKILLS)
-def test_diagram_skills_load_the_shared_diagram_conventions(skill_name):
-    """Both skills that draw diagrams must load the one document defining
-    the conventions (labelled edges, expanded abbreviations, concise labels,
-    legend). If one stops referencing it, the two deliverables drift apart."""
+def test_discovery_loads_the_diagram_conventions():
+    """The discovery skill draws the plugin's diagrams; it must load the
+    document defining their conventions (labelled edges, expanded
+    abbreviations, concise labels, legend), or hand-authored diagrams drift
+    from the generated ones."""
     assert (ROOT / DIAGRAM_CONVENTIONS).exists()
-    text = (SKILLS_DIR / skill_name / "SKILL.md").read_text()
-    assert DIAGRAM_CONVENTIONS in text, (
-        f"{skill_name}/SKILL.md no longer loads {DIAGRAM_CONVENTIONS}"
-    )
+    text = (SKILLS_DIR / "aws-architecture-discovery" / "SKILL.md").read_text()
+    assert DIAGRAM_CONVENTIONS in text, f"aws-architecture-discovery/SKILL.md no longer loads {DIAGRAM_CONVENTIONS}"
 
 
 MARKDOWN_DOCS = sorted(

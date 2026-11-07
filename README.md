@@ -6,9 +6,8 @@
 A Claude Code plugin for analyzing AWS accounts: Well-Architected Framework
 reviews, cost optimization, security posture, architecture discovery and
 gap analysis, VPC network traffic analysis, multi-account Organizations
-posture, disaster-recovery readiness, and polished Lucid diagrams -- each
-backed by a tested Python collection layer and Markdown/HTML/PDF reporting
-with charts.
+posture, and disaster-recovery readiness -- each backed by a tested
+Python collection layer and Markdown/HTML/PDF reporting with charts.
 
 > **Read-only by design.** Every skill in this plugin only calls
 > `Describe*`/`List*`/`Get*` AWS APIs. **Grant the credentials you use with
@@ -25,7 +24,6 @@ with charts.
 | `aws-architecture-discovery` | `skills/aws-architecture-discovery/` | Full infrastructure inventory (VPC/network, compute, containers, data stores) with Mermaid topology diagrams -- every edge labelled with its route/protocol, plus a legend |
 | `aws-architecture-gap-analysis` | `skills/aws-architecture-gap-analysis/` | Synthesizes the other skills' output into one prioritized gap analysis |
 | `aws-network-traffic-analysis` | `skills/aws-network-traffic-analysis/` | VPC Flow Logs (via CloudWatch Logs Insights) + GuardDuty network findings: top talkers, rejected traffic, port-scan heuristic, anomalies |
-| `aws-lucid-diagrams` | `skills/aws-lucid-diagrams/` | Draws polished AWS architecture diagrams in Lucidchart (via the Lucid MCP connector) using real AWS service icons, laid out to minimize crossings, with a self-check visual pass before handoff |
 | `aws-organizations-posture` | `skills/aws-organizations-posture/` | Multi-account posture: Organizations membership, SCP coverage, delegated administrators, whether GuardDuty/Security Hub are managed org-wide |
 | `aws-dr-readiness` | `skills/aws-dr-readiness/` | A DR readiness score and ordered fixes over AWS Backup coverage, RDS Multi-AZ/replica/global-cluster topology, S3 replication, and Route 53 health checks -- mapped against AWS's DR strategy tiers |
 
@@ -108,7 +106,7 @@ that points at this repo:
 {
   "name": "aws-well-architected-and-analysis",
   "source": { "source": "github", "repo": "rtym/aws-well-architected-and-analysis" },
-  "description": "AWS account analysis: Well-Architected reviews, cost, security, architecture discovery/gap analysis, network traffic, Organizations posture, DR readiness, and Lucid diagrams."
+  "description": "AWS account analysis: Well-Architected reviews, cost, security, architecture discovery/gap analysis, network traffic, Organizations posture, and DR readiness."
 }
 ```
 
@@ -162,24 +160,6 @@ never called automatically; it only runs if you explicitly ask the
 `aws-well-architected-review` skill to persist findings, and it isn't
 included in the least-privilege policy by default. Add it yourself as a
 deliberate, separate decision if you want that capability.
-
-### Lucid MCP (optional, for `aws-lucid-diagrams`)
-
-That one skill needs the Lucid MCP connector connected in your Claude Code
-session. This is a user-side step Claude cannot complete on its own:
-
-1. Run `/mcp` in Claude Code and select **"claude.ai Lucid"**.
-2. **If it isn't listed**, the connector needs enabling first on the
-   claude.ai side -- go to claude.ai's connector/integration settings,
-   find "Lucid," and enable it there, then run `/mcp` again.
-3. Selecting it runs an OAuth flow in your browser; once it reports
-   success, the skill's full Lucid tool set becomes available for that
-   session.
-
-No setup is needed ahead of time beyond having a Lucid account -- the
-skill checks connection status itself (via `ToolSearch("Lucid")`) and will
-prompt for the steps above the first time it's used if Lucid isn't
-already connected.
 
 ## Running the tests
 

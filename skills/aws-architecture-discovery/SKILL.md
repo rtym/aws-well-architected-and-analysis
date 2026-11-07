@@ -38,7 +38,7 @@ conventions any diagram you hand-author has to follow:
 
 ```
 view ${CLAUDE_PLUGIN_ROOT}/skills/aws-architecture-discovery/references/viewpoints.md
-view ${CLAUDE_PLUGIN_ROOT}/skills/aws-lucid-diagrams/references/diagram-conventions.md
+view ${CLAUDE_PLUGIN_ROOT}/skills/aws-architecture-discovery/references/diagram-conventions.md
 view ${CLAUDE_PLUGIN_ROOT}/skills/aws-architecture-gap-analysis/references/writing-style.md
 ```
 

@@ -5,7 +5,7 @@ different architecture-documentation viewpoint you may be asked to
 produce.
 
 However you draw a viewpoint, it obeys the four rules in
-`skills/aws-lucid-diagrams/references/diagram-conventions.md`: labelled
+`skills/aws-architecture-discovery/references/diagram-conventions.md`: labelled
 edges, expanded abbreviations, one clause per label, and a legend. Each
 viewpoint below says under "connectivity to label" what that means for its
 resources.

@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # These two deliberately name the banned vocabulary in order to ban it.
 FILLER_EXEMPT_DOCS = {
     "skills/aws-architecture-gap-analysis/references/writing-style.md",
-    "skills/aws-lucid-diagrams/references/diagram-conventions.md",
+    "skills/aws-architecture-discovery/references/diagram-conventions.md",
 }
 
 WRITING_STYLE_DOC = "skills/aws-architecture-gap-analysis/references/writing-style.md"
