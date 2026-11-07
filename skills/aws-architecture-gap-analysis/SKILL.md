@@ -46,7 +46,13 @@ rather than re-asserting facts from memory.
      run at least the pillars most relevant to what the user is worried
      about.
    - `aws-security-review`'s evidence/report -- strongly recommended for
-     the security-issue half of the analysis.
+     the security-issue half of the analysis. Its `--json-out` file
+     carries an `Analysis` block: the posture score, every check result
+     (status, severity, Security Hub control, affected resources), attack
+     paths, and priority actions. Cite those check IDs and attack paths
+     instead of re-deriving them from the raw evidence, and treat an
+     attack path as an architectural gap in its own right (it is the
+     cross-cutting kind this skill exists to find).
    - `aws-cost-optimization`'s report -- optional, only if the user wants
      cost folded into the same prioritization.
 

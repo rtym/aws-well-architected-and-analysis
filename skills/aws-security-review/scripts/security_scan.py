@@ -124,9 +124,7 @@ def _scorecard(analysis: dict, region_count: int) -> Scorecard:
     by_domain = engine.scores_by_domain(analysis["results"])
     areas = []
     for domain in security_checks.DOMAINS:
-        s = by_domain.get(domain)
-        if s is None:
-            continue
+        s = by_domain[domain]
         detail = f"{s.passed} of {s.evaluated} passed" if s.evaluated else "no data"
         areas.append(ScoreArea(domain, s.score, detail))
     detail = f"{overall.passed} of {overall.evaluated} checks passed across {_plural(region_count, 'region')}"
@@ -282,8 +280,6 @@ def _check_tables(analysis: dict) -> list[tuple[str, str]]:
     sections = []
     for domain in security_checks.DOMAINS:
         domain_results = [r for r in analysis["results"] if r.check.domain == domain]
-        if not domain_results:
-            continue
         ordered = sorted(
             domain_results,
             key=lambda r: ({engine.FAIL: 0, engine.NO_DATA: 1, engine.PASS: 2}[r.status], engine.SEVERITY_RANK[r.check.severity]),

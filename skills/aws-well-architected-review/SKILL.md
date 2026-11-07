@@ -88,7 +88,11 @@ already logged there cross-referenced against your findings.
 This produces an **evidence pack**, not a findings report -- it's raw
 counts and resource lists organized by pillar, plus an explicit prompt at
 the top of the report reminding you (or whoever reads it) that judgment is
-the next step.
+the next step. The Security section also runs the security review's
+deterministic checks against the pack, ordered by the SEC question each
+informs (Security Baseline Checks). A FAIL there is evidence against that
+question, not its rating; NO DATA marks evidence the pack doesn't collect,
+which `aws-security-review` fills in.
 
 ### Step 2 -- Score each question
 

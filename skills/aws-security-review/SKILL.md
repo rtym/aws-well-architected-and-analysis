@@ -15,8 +15,10 @@ description: >
   unencrypted RDS instances, customer-managed KMS keys without rotation,
   Lambda function URLs without auth, EC2 instances not enforcing IMDSv2,
   load balancer listeners without TLS, and ACM certificates expired or
-  expiring within 30 days -- then produce a severity-ranked
-  Markdown/HTML/PDF security report with charts. Use this skill when
+  expiring within 30 days -- then score the posture with 31 checks mapped
+  to Security Hub controls, correlate gaps into attack paths, rank every
+  fix in one priority list, and produce a Markdown/HTML/PDF security report
+  with charts. Use this skill when
   someone asks for a "security review", "security posture assessment",
   "check GuardDuty", "check Security Hub", "find security gaps", "IAM
   audit", "is this account secure", "security recommendations", "check
@@ -66,7 +68,32 @@ fails (WeasyPrint needs Pango: `brew install pango` on macOS), the Markdown
 and HTML reports are already written -- rerun with `--formats md,html` or
 tell the user how to enable PDF.
 
-This produces: CloudTrail posture (multi-region trail, logging, log file
+The report leads with the analysis, then keeps the raw evidence below it:
+
+- **Posture score** (0-100) with a breakdown by area (detection and
+  logging, identity and access, network exposure, data protection). It is
+  passed checks divided by checks with data, the same method Security Hub
+  uses for its security score; NO DATA checks are left out. Severity does
+  not weight it, so always quote it together with the critical and high
+  counts in the KPI tiles.
+- **Executive summary** and **priority actions**: the ten most important
+  fixes, most severe first. At equal severity an attack path comes before
+  an active threat, and both before a single failed check.
+- **Attack paths**: gaps that combine on the same resource or region, such
+  as an internet-reachable instance that still accepts IMDSv1, a public
+  instance with an administration or database port open, a public
+  unencrypted database, exposure in a region without GuardDuty, active
+  threats with no audit trail, and public buckets with no account-level
+  backstop.
+- **Control checks**: every check with its status, severity, and Security
+  Hub control ("(related)" marks a check that tests the same risk more
+  narrowly than the control).
+
+`--json-out` writes the evidence plus an `Analysis` block (score, every
+check result with affected resources, attack paths, priority actions).
+`aws-architecture-gap-analysis` reads it directly.
+
+The evidence sections cover: CloudTrail posture (multi-region trail, logging, log file
 validation), IAM hygiene summary, S3 exposure (per bucket plus the
 account-level Block Public Access backstop), per-region GuardDuty/
 Security Hub/Inspector/Macie/Config-recorder enablement + finding counts,
@@ -83,7 +110,11 @@ within 30 days.
 
 ### Step 2 -- Triage before reporting
 
-Not every returned finding is equally worth the user's attention. Prioritize:
+Start from the report's Priority Actions and Attack Paths: they already
+apply the ordering below, deterministically. Your job is to confirm each
+one against the JSON evidence and add the context the script can't know
+(which resources are production, which exposure is intended). Never
+re-rank by hand without saying why. The ordering:
 
 1. **GuardDuty/Security Hub not enabled at all** in a region with live
    workloads -- this is a bigger gap than any individual finding, because
@@ -135,3 +166,7 @@ pillar, and feeds `aws-architecture-gap-analysis`.
 4. IAM MFA/root-account/key-age findings are never omitted even if the
    headline GuardDuty/Security Hub numbers look clean -- IAM hygiene is
    checked independently of either detection service.
+5. The posture score is never quoted alone: pair it with the number of
+   failed critical and high checks, and say how many checks had no data.
+6. Every attack path in the report is either confirmed against the
+   evidence or explicitly marked as intended exposure by the user.

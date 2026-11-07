@@ -130,6 +130,31 @@ of what's already been gotten wrong.
 `test_skill_scripts.py`; anything touching argparse, `save()`, or
 `--json-out` needs `test_script_main.py`.
 
+## 4a. Adding a scored check
+
+Scored reports (security, DR, and the WA pack's security baseline) share
+`shared/analysis/checks.py`. To add a check, append a `(Check, evaluator)`
+pair to the skill's catalog (`security_checks.CATALOG`,
+`dr_checks.CATALOG`):
+
+- `title` states the passing condition and `finding` the failure; both
+  appear in reports. `remediation` is an imperative sentence without a
+  final period (reports place it inside sentences).
+- Use the severity of the Security Hub control the check implements, set
+  `control`, and pass `exact=False` when the check tests the risk more
+  narrowly than the control. Verify the control and severity against the
+  Security Hub controls reference and record the source in `SOURCES.md`.
+  A check with no control gets a plugin-assigned severity, listed in the
+  skill's severity reference.
+- The evaluator returns `None` when the evidence it needs is missing (an
+  older `--json-out` file, a service that couldn't be read), `[]` when
+  nothing is affected, or the `Affected` resources. Never return `[]` for
+  missing evidence: that turns "couldn't check" into a pass and inflates
+  the score.
+- Add the check to the parametrized fail-on-its-own-evidence test in
+  `tests/test_analysis_*_checks.py`, and a NO DATA case if its evidence
+  can be absent.
+
 ## 5. Adding a skill
 
 `tests/test_skill_integrity.py` enforces the structure, so a new skill

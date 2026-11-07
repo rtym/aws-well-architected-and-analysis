@@ -79,30 +79,68 @@ A standard being *enabled* with a low *control-pass* percentage is a
 different finding from a standard not being *enabled* at all -- state
 which one you're reporting.
 
-## Control IDs for the deterministic checks
+## Control IDs and severities for the deterministic checks
 
-The scan's own deterministic checks (run directly against the APIs, not
-via Security Hub) each correspond to a Security Hub control -- cite the ID
-so the writeup is audit-ready even when Security Hub itself is off.
-Verified against the Security Hub controls documentation on 2026-11-06,
-except IAM.3's exact wording (older source; the 90-day threshold is also
-CIS's):
+The scan's own checks (`shared/analysis/security_checks.py`) run directly
+against the APIs, not through Security Hub, so the report is audit-ready
+even when Security Hub is off. Each check uses the severity of the
+Security Hub control it implements. The severities below were verified
+against the Security Hub controls reference on 2026-11-07. "(related)"
+means the check tests the same risk more narrowly than the control: for
+example, Config.1 also requires the service-linked role, and the check
+only confirms the recorder is recording.
 
-| Report section / finding               | Control | Suggested severity |
-| -------------------------------------- | ------- | ------------------ |
-| Publicly restorable EBS snapshot       | EC2.1   | CRITICAL           |
-| Default security group with rules      | EC2.2   | LOW (MEDIUM if instances use it) |
-| Unencrypted EBS volume                 | EC2.3   | MEDIUM             |
-| EBS encryption-by-default off          | EC2.7   | MEDIUM             |
-| Instance allowing IMDSv1               | EC2.8   | HIGH               |
-| Publicly shared RDS snapshot (DB or cluster) | RDS.1 | CRITICAL        |
-| Publicly accessible RDS instance       | RDS.2   | CRITICAL           |
-| RDS storage not encrypted              | RDS.3   | MEDIUM             |
-| Account-level Block Public Access off  | S3.1    | MEDIUM (HIGH with public buckets present) |
-| KMS key rotation disabled              | KMS.4   | MEDIUM             |
-| Access key older than 90 days          | IAM.3   | MEDIUM             |
-| Lambda URL with auth type NONE         | --      | HIGH (no stable control ID; the public resource policy behind it is flagged by Lambda.1) |
+| Check | Control | Severity |
+| ----- | ------- | -------- |
+| Config recorder recording in every region | Config.1 (related) | CRITICAL |
+| Root user has no access key | IAM.4 | CRITICAL |
+| Root user has MFA | IAM.9 | CRITICAL |
+| No high-risk port open to 0.0.0.0/0 or ::/0 | EC2.19 | CRITICAL |
+| No publicly restorable EBS snapshot | EC2.1 | CRITICAL |
+| No publicly shared RDS snapshot (DB or cluster) | RDS.1 | CRITICAL |
+| No publicly accessible RDS instance | RDS.2 | CRITICAL |
+| GuardDuty enabled in every region | GuardDuty.1 | HIGH |
+| Multi-region trail logging | CloudTrail.1 (related) | HIGH |
+| Amazon Inspector active | Inspector.1 (related) | HIGH |
+| Internet-open rules only on ports 80/443 | EC2.18 | HIGH |
+| Default security groups allow no traffic | EC2.2 | HIGH |
+| Every instance requires IMDSv2 | EC2.8 | HIGH |
+| Every bucket blocks public access | S3.8 | HIGH |
+| No Lambda URL with auth type NONE | Lambda.1 (related) | HIGH (plugin-assigned; Lambda.1 itself is CRITICAL) |
+| Amazon Macie enabled | Macie.1 | MEDIUM |
+| Console users have MFA | IAM.5 | MEDIUM |
+| No active access key older than 90 days | IAM.3 | MEDIUM |
+| Account password policy set | IAM.7 (related) | MEDIUM |
+| Listeners use TLS or redirect to HTTPS | ELB.1 (related) | MEDIUM |
+| No ACM certificate expiring within 30 days | ACM.1 (related) | MEDIUM |
+| Account-level S3 Block Public Access fully on | S3.1 | MEDIUM |
+| EBS encryption by default on | EC2.7 | MEDIUM |
+| Every EBS volume encrypted | EC2.3 (related) | MEDIUM |
+| Every RDS instance encrypted | RDS.3 | MEDIUM |
+| KMS key rotation on | KMS.4 | MEDIUM |
+| Log file validation on every trail | CloudTrail.4 | LOW |
+
+Checks with no Security Hub control carry a plugin-assigned severity:
+Security Hub enabled (MEDIUM), no active IAM Access Analyzer findings
+(MEDIUM), an Access Analyzer analyzer in every region (LOW; an
+organization analyzer in another account also covers it), and S3 default
+encryption (LOW; S3 has encrypted new objects by default since January
+2023).
+
+EC2.19's high-risk ports are 20, 21, 22, 23, 25, 110, 135, 143, 445,
+1433, 1434, 3000, 3306, 3389, 4333, 5000, 5432, 5500, 5601, 8080, 8088,
+8888, 9200, and 9300. EC2.18 with its default parameters allows only TCP
+80 and 443 to be open to the world.
 
 A publicly restorable snapshot (EBS or RDS) is a complete, out-of-band
 copy of the data: treat it at the same severity as a public S3 bucket
 even though no "breach" has been observed.
+
+## The posture score
+
+Score = passed checks / (passed + failed checks). Checks with no data are
+left out, as Security Hub leaves out controls with no data. A check fails
+when any resource in any scanned region fails it. Severity does not weight
+the score: an account can score 90 with one CRITICAL failure, which is why
+the report always shows the critical and high counts next to it. Bands:
+90+ Strong, 70-89 Fair, 50-69 Weak, below 50 Poor.

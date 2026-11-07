@@ -569,3 +569,7 @@ def test_format_value(value, fmt, expected):
 def test_font_families_always_end_with_the_bundled_fallback():
     families = charts._font_families()
     assert families[-1] == "DejaVu Sans"
+
+
+def test_horizontal_bar_chart_puts_the_axis_label_on_the_value_axis():
+    assert charts.bar_chart(["a", "b"], [1, 2], ylabel="Count", horizontal=True)

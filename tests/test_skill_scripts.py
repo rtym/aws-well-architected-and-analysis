@@ -1454,3 +1454,12 @@ def test_discovery_report_headlines_inventory_and_matrix_for_many_regions():
     assert kpis["S3 buckets"].tone == "warn"
     assert kpis["Internet-open SG rules"].value == "3"
     assert "| Region | VPCs | EC2 Instances |" in md
+
+
+def test_security_check_tables_carry_check_notes():
+    """With account-level Block Public Access fully on, a bucket-level gap
+    can't make data public; the check table says so under the table."""
+    data = _security_data()
+    data["Global"]["DataStores"]["PubliclyAccessibleBuckets"] = [{"Name": "b"}]
+    md = security_scan.build_report(data).render_markdown()
+    assert "_Account-level Block Public Access is fully on, which overrides these bucket settings" in md
