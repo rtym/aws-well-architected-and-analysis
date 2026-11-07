@@ -305,6 +305,7 @@ def test_collect_region_security_includes_the_new_exposure_keys(monkeypatch, ctx
         "securityhub_standards_summary",
         "inspector2_status",
         "macie_status",
+        "access_analyzers",
         "access_analyzer_findings",
         "config_rule_compliance",
         "config_recorder_status",
@@ -314,9 +315,15 @@ def test_collect_region_security_includes_the_new_exposure_keys(monkeypatch, ctx
         "kms_keys_without_rotation",
         "lambda_urls_without_auth",
     ):
-        monkeypatch.setattr(security, fn, lambda ctx, region, _fn=fn: _fn)
+        monkeypatch.setattr(security, fn, lambda ctx, region, *rest, _fn=fn: _fn)
+    seen = {}
+    monkeypatch.setattr(
+        security, "access_analyzer_findings", lambda ctx, region, analyzers=None: seen.setdefault("analyzers", analyzers)
+    )
 
     out = security.collect_region_security(ctx, "us-east-1")
+    # The analyzer list is fetched once and handed to the findings call.
+    assert seen["analyzers"] == "access_analyzers"
     assert set(out) == {
         "Region",
         "GuardDuty",
@@ -326,6 +333,7 @@ def test_collect_region_security_includes_the_new_exposure_keys(monkeypatch, ctx
         "SecurityHubStandardsSummary",
         "Inspector2",
         "Macie",
+        "AccessAnalyzers",
         "AccessAnalyzerFindings",
         "ConfigRuleCompliance",
         "ConfigRecorder",

@@ -660,8 +660,8 @@ def test_security_scan_guardduty_table_is_most_severe_first_with_critical_band()
     section = md.split("## GuardDuty Findings", 1)[1]
     order = [section.index(t) for t in ("AttackSequence", "Trojan", "Recon")]
     assert order == sorted(order)
-    # Severity cells render as badges; the label sits just before the type.
-    assert "CRITICAL</span> | AttackSequence:IAM/CompromisedCredentials |" in md
+    # The severity cell sits just before the type.
+    assert "| CRITICAL | AttackSequence:IAM/CompromisedCredentials |" in md
 
 
 def test_security_scan_formats_security_group_port_ranges():
@@ -1099,3 +1099,358 @@ def test_analyze_organization_collect_is_a_passthrough(monkeypatch):
     out = analyze_organization.collect(object(), "eu-central-1")
     assert out == {"IsOrganizationsMember": False}
     assert recorded["home_region"] == "eu-central-1"
+
+
+# ------------------------------------------------- 1.5.0 analysis layer
+def _rich_security_data() -> dict:
+    """A two-region account with something wrong in every area, so every
+    analysis section renders."""
+    instance = {
+        "InstanceId": "i-1",
+        "PublicIpAddress": "54.0.0.1",
+        "State": {"Name": "running"},
+        "SecurityGroups": [{"GroupId": "sg-1"}],
+    }
+    data = _security_data(
+        GuardDutyFindings=[
+            {"Type": "CryptoCurrency:EC2/BitcoinTool.B!DNS", "Severity": 8.0, "Resource": {"ResourceType": "Instance"}},
+            {"Type": "Recon:EC2/PortProbeUnprotectedPort", "Severity": 2.0},
+        ],
+        SecurityHubFindings=[{"Severity": {"Label": "CRITICAL"}, "Title": "Root key", "Resources": [{"Id": "arn:aws:iam::1:root"}]}],
+        WideOpenSecurityGroups=[{"GroupId": "sg-1", "FromPort": 22, "ToPort": 22, "IpProtocol": "tcp", "OpenRanges": ["0.0.0.0/0"]}],
+        Compute={"Instances": [instance], "InstancesAllowingImdsv1": [instance], "PlaintextListeners": [], "ExpiringCertificates": []},
+    )
+    data["AccountId"] = "123456789012"
+    data["Regions"]["us-east-1"]["Security"]["AccessAnalyzers"] = [{"name": "a", "status": "ACTIVE"}]
+    data["Global"]["IamFindings"]["RootAccountRisks"] = ["root account has an active access key"]
+    data["Global"]["IamFindings"]["ConsoleUsersWithoutMfa"] = ["alice"]
+    data["Global"]["IamFindings"]["AccessKeysToReview"] = [{"user": "ci", "key": "1", "last_rotated": "2025-01-01", "age_days": 300}]
+    data["Global"]["DataStores"]["PubliclyAccessibleBuckets"] = [{"Name": "open-bucket"}]
+    data["Global"]["AccountPublicAccessBlock"] = None
+    data["Global"]["CloudTrail"]["HasLoggingMultiRegionTrail"] = False
+    other = _security_data(GuardDuty={"Enabled": False, "DetectorIds": []})["Regions"]["us-east-1"]
+    other["RdsExposure"] = {"PubliclyAccessible": [{"DBInstanceIdentifier": "orders", "Engine": "postgres"}], "Unencrypted": [{"DBInstanceIdentifier": "orders", "Engine": "postgres"}]}
+    data["Regions"]["eu-west-1"] = other
+    return data
+
+
+def test_security_report_leads_with_score_summary_actions_and_attack_paths():
+    data = _rich_security_data()
+    report = security_scan.build_report(data)
+    md = _assert_renders(report)
+    headings = re.findall(r"^#{2,3} (.+)$", md, flags=re.M)
+    lead = ["Executive Summary", "Priority Actions", "Attack Paths"]
+    assert headings[:3] == lead
+    assert headings.index("Control Checks") < headings.index("Detection Coverage") < headings.index("Evidence Detail") < headings.index("Method and Scope")
+    for domain in ("Detection and logging", "Identity and access", "Network exposure", "Data protection"):
+        assert domain in headings
+    assert "Internet-reachable instance still accepts IMDSv1" in headings
+    assert "Publicly accessible RDS instance with unencrypted storage" in headings
+    assert report.scorecard.label == "Security posture" and report.scorecard.score < 70
+    assert {k.label for k in report.kpis} >= {"Critical gaps", "High gaps", "Attack paths", "Active threats", "Detection coverage"}
+    assert "- **Account:** 123456789012" in md
+    assert "GuardDuty reports 1 high or critical finding** that needs investigation" in md
+    # Priority actions: most severe first, attack paths before single checks.
+    actions = md.split("## Priority Actions", 1)[1].split("## Attack Paths", 1)[0]
+    assert actions.index("| 1 | CRITICAL |") < actions.index("| attack path |")
+    assert "_High-risk ports open to the internet_" in actions
+    # The SG table ranks rules by risk and names the control.
+    assert "| High-risk port (EC2.19) |" in md
+
+
+def test_security_report_for_a_clean_account_says_nothing_needs_action():
+    data = _security_data()
+    data["Regions"]["us-east-1"]["Security"]["AccessAnalyzers"] = [{"name": "a", "status": "ACTIVE"}]
+    data["Global"]["CloudTrail"]["Trails"] = [{"Name": "t", "LogFileValidationEnabled": True}]
+    report = security_scan.build_report(data)
+    md = _assert_renders(report)
+    assert report.scorecard.score == 100 and report.scorecard.band == "Strong"
+    assert "No critical or high-severity check failed." in md
+    assert "Nothing in this scan needs action now" in md
+    assert "No failed checks, attack paths, or open high-severity threats." in md
+    assert "## Attack Paths" not in md
+    assert "No open GuardDuty or Security Hub findings" in md
+
+
+def test_security_report_without_any_evaluable_evidence_says_so():
+    data = _security_data()
+    analysis = security_scan.analyze({})  # nothing evaluable
+    md = security_scan.build_report(data, analysis).render_markdown()
+    assert "No check had data to evaluate." in md
+
+
+def test_security_report_caps_long_attack_path_tables():
+    data = _rich_security_data()
+    rules = [{"GroupId": "sg-1", "FromPort": 22, "ToPort": 22, "IpProtocol": "tcp", "OpenRanges": ["0.0.0.0/0"]}]
+    instances = [
+        {"InstanceId": f"i-{n}", "PublicIpAddress": f"54.0.0.{n}", "State": {"Name": "running"}, "SecurityGroups": [{"GroupId": "sg-1"}]}
+        for n in range(30)
+    ]
+    region = data["Regions"]["us-east-1"]
+    region["WideOpenSecurityGroups"] = rules
+    region["Compute"]["Instances"] = instances
+    md = security_scan.build_report(data).render_markdown()
+    assert "5 more not shown; see the JSON evidence." in md
+
+
+def test_security_json_carries_the_analysis():
+    import json
+
+    data = _rich_security_data()
+    payload = security_scan.evidence_with_analysis(data, security_scan.analyze(data))
+    assert payload["Regions"] is data["Regions"]
+    analysis = json.loads(json.dumps(payload["Analysis"]))
+    assert analysis["Score"]["Value"] < 70
+    assert {p["Id"] for p in analysis["AttackPaths"]} >= {"exposed-imdsv1-instance", "public-unencrypted-database"}
+    assert analysis["PriorityActions"][0]["priority"] == 1
+
+
+def test_security_main_writes_json_with_analysis(monkeypatch, tmp_path):
+    import json
+
+    data = _rich_security_data()
+    monkeypatch.setattr(security_scan, "make_context", lambda args: object())
+    monkeypatch.setattr(security_scan, "resolve_regions", lambda ctx, args: ["us-east-1"])
+    monkeypatch.setattr(security_scan, "collect", lambda ctx, regions: data)
+    out = tmp_path / "evidence.json"
+    assert security_scan.main(["--output-dir", str(tmp_path), "--formats", "md", "--json-out", str(out)]) == 0
+    assert "Analysis" in json.loads(out.read_text())
+    assert (tmp_path / "security-review.md").exists()
+
+
+def test_security_collect_tolerates_a_missing_account_id(monkeypatch):
+    from botocore.exceptions import ClientError
+
+    class Ctx:
+        def account_id(self):
+            raise ClientError({"Error": {"Code": "AccessDenied"}}, "GetCallerIdentity")
+
+    for module, name in (
+        (security_scan.security, "collect_global_security"),
+        (security_scan.security, "collect_region_security"),
+        (security_scan.security, "account_public_access_block"),
+        (security_scan.compute, "collect_region_compute"),
+        (security_scan.data_stores, "collect_global_data_stores"),
+        (security_scan.cloudtrail, "cloudtrail_posture"),
+    ):
+        monkeypatch.setattr(module, name, lambda *a, **k: {})
+    monkeypatch.setattr(security_scan.data_stores, "describe_rds_instances", lambda *a: [])
+    monkeypatch.setattr(security_scan.data_stores, "describe_rds_snapshots", lambda *a: [])
+    monkeypatch.setattr(security_scan.data_stores, "rds_exposure", lambda instances: {})
+    monkeypatch.setattr(security_scan.data_stores, "public_rds_snapshots", lambda *a: [])
+    monkeypatch.setattr(security_scan.data_stores, "public_rds_cluster_snapshots", lambda *a: [])
+    monkeypatch.setattr(security_scan.vpc, "describe_security_groups", lambda *a: [])
+    assert security_scan.collect(Ctx(), ["us-east-1"])["AccountId"] is None
+
+
+def test_security_rule_risk_labels():
+    assert security_scan._rule_risk({"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22}) == "High-risk port (EC2.19)"
+    assert security_scan._rule_risk({"IpProtocol": "tcp", "FromPort": 8443, "ToPort": 8443}) == "Not a web port (EC2.18)"
+    assert security_scan._rule_risk({"IpProtocol": "tcp", "FromPort": 443, "ToPort": 443}) == "Web port (80/443)"
+
+
+def test_security_report_lists_more_than_three_regions_compactly():
+    data = _security_data()
+    for region in ("eu-west-1", "eu-central-1", "ap-southeast-2"):
+        data["Regions"][region] = data["Regions"]["us-east-1"]
+    report = security_scan.build_report(data)
+    regions_kpi = next(k for k in report.kpis if k.label == "Regions scanned")
+    assert regions_kpi.value == "4" and regions_kpi.note.endswith("...")
+
+
+def test_dr_report_scores_readiness_and_lists_fixes_in_order():
+    data = {
+        "Regions": {"us-east-1": {"DataStores": {"RdsInstances": [{"DBInstanceIdentifier": "db1"}], "RdsClusters": []}}},
+        "Global": {"Route53HostedZones": [{"Id": "Z1"}]},
+        "Summary": {
+            "Backup": {"PlanCount": 1, "VaultCount": 1, "PlansWithCrossRegionCopy": 0, "ProtectedResourceCount": 0, "RecentFailedJobs": 2},
+            "Rds": {"SingleAzInstances": [{"DBInstanceIdentifier": "db1"}], "SingleAzClusters": [], "InstancesWithReadReplicas": [], "CrossRegionOrGlobalClusters": []},
+            "S3": {"ReplicatedBuckets": [], "UnreplicatedBuckets": [{"Name": "b"}]},
+            "Route53HealthChecks": [],
+        },
+    }
+    report = dr_readiness.build_report(data)
+    md = _assert_renders(report)
+    assert report.scorecard.label == "DR readiness"
+    # Only the plan check passes; no cluster exists, so that check has no data.
+    assert report.scorecard.score == 17 and report.scorecard.detail.startswith("1 of 6 checks passed")
+    assert "**What to fix, in order:**" in md
+    fixes = md.split("**What to fix, in order:**", 1)[1]
+    assert fixes.index("| HIGH |") < fixes.index("| MEDIUM |") < fixes.index("| LOW |")
+    kpis = {k.label: k for k in report.kpis}
+    assert kpis["Single-AZ databases"].value == "1" and kpis["Single-AZ databases"].tone == "warn"
+    assert kpis["S3 replication"].value == "0/1"
+
+
+def test_cost_helpers_total_months_and_savings():
+    periods = [
+        {"TimePeriod": {"Start": "2026-08-15", "End": "2026-09-01"}, "Groups": [{"Keys": ["EC2"], "Metrics": {"UnblendedCost": {"Amount": "50"}}}]},
+        {"TimePeriod": {"Start": "2026-09-01", "End": "2026-10-01"}, "Groups": [
+            {"Keys": ["EC2"], "Metrics": {"UnblendedCost": {"Amount": "100"}}},
+            {"Keys": ["S3"], "Metrics": {"UnblendedCost": {"Amount": "20"}}},
+        ]},
+        {"TimePeriod": {"Start": "2026-10-01", "End": "2026-11-01"}, "Groups": [{"Keys": ["EC2"], "Metrics": {"UnblendedCost": {"Amount": "150"}}}]},
+        {"TimePeriod": {"Start": "2026-11-01", "End": "2026-11-07"}, "Groups": [{"Keys": ["EC2"], "Metrics": {"UnblendedCost": {"Amount": "30"}}}]},
+    ]
+    assert analyze_cost.service_totals(periods) == {"EC2": 330.0, "S3": 20.0}
+    # Partial first and last months are left out of month-over-month math.
+    assert analyze_cost.complete_months(periods) == [("2026-09", 120.0), ("2026-10", 150.0)]
+    terminate = {"RightsizingType": "TERMINATE", "TerminateRecommendationDetail": {"EstimatedMonthlySavings": "40.5"}}
+    modify = {
+        "RightsizingType": "MODIFY",
+        "ModifyRecommendationDetail": {
+            "TargetInstances": [
+                {"EstimatedMonthlySavings": "10", "DefaultTargetInstance": False},
+                {"EstimatedMonthlySavings": "25", "DefaultTargetInstance": True},
+            ]
+        },
+    }
+    assert analyze_cost.rightsizing_monthly_savings(terminate) == 40.5
+    assert analyze_cost.rightsizing_monthly_savings(modify) == 25.0
+    assert analyze_cost.rightsizing_monthly_savings({"RightsizingType": "MODIFY"}) == 0.0
+    assert analyze_cost.rightsizing_monthly_savings({"RightsizingType": "TERMINATE", "TerminateRecommendationDetail": {"EstimatedMonthlySavings": "n/a"}}) == 0.0
+
+
+def test_cost_report_headlines_spend_change_and_savings():
+    groups = lambda amounts: [{"Keys": [svc], "Metrics": {"UnblendedCost": {"Amount": str(v)}}} for svc, v in amounts.items()]  # noqa: E731
+    services = {f"Service {i}": 10.0 * (i + 1) for i in range(7)}
+    data = {
+        "CostReport": {
+            "CostByService": [
+                {"TimePeriod": {"Start": "2026-09-01", "End": "2026-10-01"}, "Groups": groups(services)},
+                {"TimePeriod": {"Start": "2026-10-01", "End": "2026-11-01"}, "Groups": groups({k: v * 1.5 for k, v in services.items()})},
+            ],
+            "RightsizingRecommendations": [
+                {"CurrentInstance": {"ResourceId": "i-small"}, "RightsizingType": "TERMINATE", "TerminateRecommendationDetail": {"EstimatedMonthlySavings": "5"}},
+                {"CurrentInstance": {"ResourceId": "i-big"}, "RightsizingType": "TERMINATE", "TerminateRecommendationDetail": {"EstimatedMonthlySavings": "500"}},
+            ],
+            "ReservationUtilization": {"Total": {"UtilizationPercentage": "65"}},
+        },
+        "ComputeOptimizerEc2": {},
+        "ComputeOptimizerEbs": {},
+        "IdleResources": {"us-east-1": {"UnattachedVolumes": [], "UnassociatedEips": [], "StoppedInstances": []}},
+    }
+    report = analyze_cost.build_report(data, "2026-09-01", "2026-11-01")
+    md = _assert_renders(report)
+    kpis = {k.label: k for k in report.kpis}
+    assert kpis["Spend in window"].value == "$700"
+    assert kpis["Last full month"].note == "2026-10: +50% vs 2026-09"
+    assert kpis["Rightsizing savings"].value == "$505/mo"
+    assert kpis["RI utilization"].tone == "bad"
+    assert kpis["Budgets"].tone == "bad"
+    # Biggest saving first.
+    assert md.index("i-big") < md.index("i-small")
+    assert "| Service 6 | $175 | 25.0% |" in md
+
+
+def test_cost_report_with_a_single_full_month():
+    data = {
+        "CostReport": {"CostByService": [{"TimePeriod": {"Start": "2026-10-01", "End": "2026-11-01"}, "Groups": [{"Keys": ["EC2"], "Metrics": {"UnblendedCost": {"Amount": "0"}}}]}]},
+        "ComputeOptimizerEc2": {},
+        "ComputeOptimizerEbs": {},
+        "IdleResources": {},
+    }
+    kpis = {k.label: k for k in analyze_cost.build_report(data, "2026-10-01", "2026-11-01").kpis}
+    assert kpis["Last full month"].note == "2026-10"
+    two = dict(data)
+    two["CostReport"] = {"CostByService": data["CostReport"]["CostByService"] * 2}
+    kpis = {k.label: k for k in analyze_cost.build_report(two, "2026-10-01", "2026-11-01").kpis}
+    assert kpis["Last full month"].note.endswith("n/a vs 2026-10")
+
+
+def test_wa_evidence_pack_runs_the_security_checks_per_sec_question():
+    evidence = _wa_evidence()
+    bundle = collect_evidence.security_bundle(evidence)
+    assert "AccountPublicAccessBlock" not in bundle["Global"]  # not collected -> NO DATA
+    report = collect_evidence.build_report(evidence, ["security"])
+    md = _assert_renders(report)
+    assert "### Security Baseline Checks" in md
+    table = md.split("### Security Baseline Checks", 1)[1]
+    assert "| SEC02 |" in table and "| NO DATA |" in table
+    kpis = {k.label: k for k in report.kpis}
+    assert "Security checks failed" in kpis
+
+
+def _wa_evidence() -> dict:
+    region = {
+        "Network": {"WideOpenSecurityGroupRules": [], "SecurityGroups": [], "NatGateways": [], "VpcEndpoints": []},
+        "Compute": {"Instances": [], "InstancesAllowingImdsv1": [], "PlaintextListeners": [], "ExpiringCertificates": []},
+        "DataStores": {"RdsInstances": []},
+        "Security": {"GuardDuty": {"Enabled": False}, "SecurityHub": {"Enabled": True}, "AccessAnalyzerFindings": []},
+        "Observability": {"Alarms": [{"AlarmName": "a"}], "AlarmsWithNoActions": [{"AlarmName": "a"}]},
+        "Backup": {"BackupPlans": []},
+    }
+    return {
+        "Regions": {"us-east-1": region},
+        "Global": {
+            "Security": {"IamFindings": {"ConsoleUsersWithoutMfa": [], "AccessKeysToReview": [], "RootAccountRisks": [], "PasswordPolicySet": True}},
+            "DataStores": {"PubliclyAccessibleBuckets": [], "UnencryptedBuckets": []},
+            "Cost": {"Budgets": []},
+        },
+    }
+
+
+def test_org_report_headlines_scp_coverage_and_central_management():
+    posture = {
+        "IsOrganizationsMember": True,
+        "Organization": {"MasterAccountId": "111111111111", "FeatureSet": "ALL"},
+        "Accounts": [
+            {"Id": "111111111111", "Name": "mgmt", "Status": "ACTIVE"},
+            {"Id": "222222222222", "Name": "prod", "Status": "ACTIVE"},
+            {"Id": "333333333333", "Name": "dev", "Status": "SUSPENDED"},
+        ],
+        "ServiceControlPolicies": [{"Id": "p-FullAWSAccess", "Name": "FullAWSAccess"}, {"Id": "p-1", "Name": "deny-regions"}],
+        "AccountsWithoutScpCoverage": [{"Id": "333333333333", "Name": "dev"}],
+        "DelegatedAdministrators": [],
+        "GuardDutyOrganizationAdmin": {"AdminAccountId": "222222222222"},
+        "SecurityHubOrganizationAdmin": None,
+    }
+    kpis = {k.label: k for k in analyze_organization.build_report(posture).kpis}
+    assert kpis["Accounts"].note == "2 active"
+    assert (kpis["SCP coverage"].value, kpis["SCP coverage"].tone) == ("50%", "bad")
+    assert kpis["Restrictive SCPs"].value == "1"
+    assert kpis["GuardDuty org-managed"].tone == "good" and kpis["Security Hub org-managed"].tone == "warn"
+
+
+def test_traffic_report_headlines_volume_rejects_and_scans():
+    data = {
+        "Window": {"Start": "2026-11-06T00:00:00", "End": "2026-11-07T00:00:00"},
+        "FlowLogAnalysis": {
+            "traffic_by_protocol": [{"protocol": "6", "totalBytes": "2147483648"}],
+            "rejected_traffic": [{"srcAddr": "1.2.3.4", "dstAddr": "10.0.0.1", "dstPort": "22", "rejects": "1500"}],
+            "port_scan_candidates": [{"srcAddr": "1.2.3.4", "distinctPorts": "40"}],
+            "top_external_egress": [{"srcAddr": "10.0.0.1", "dstAddr": "8.8.8.8", "totalBytes": "10"}],
+            "top_talkers_by_bytes": [{"srcAddr": "10.0.0.1", "dstAddr": "8.8.8.8", "totalBytes": "10"}],
+        },
+        "NetworkFindings": [{"Type": "Recon:EC2/Portscan", "Severity": 8.0}],
+    }
+    kpis = {k.label: k for k in traffic_analysis.build_report(data, "us-east-1", "/vpc/flow").kpis}
+    assert kpis["Traffic observed"].value == "2.0 GiB"
+    assert kpis["Rejected flows"].value == "1.5K"
+    assert kpis["Port-scan suspects"].tone == "bad"
+    assert kpis["External destinations"].value == "1"
+    assert kpis["GuardDuty network findings"].note == "1 high or critical"
+
+
+def test_discovery_report_headlines_inventory_and_matrix_for_many_regions():
+    def region(n):
+        return {
+            "Network": {"Vpcs": [], "WideOpenSecurityGroupRules": [{"GroupId": "sg"}] * n},
+            "Compute": {"Instances": [{}] * n, "LoadBalancersV2": [], "ClassicLoadBalancers": []},
+            "Containers": {"EcsClusters": [{}], "EksClusters": [{}]},
+            "DataStores": {"RdsInstances": [], "LambdaFunctions": [{}] * 3},
+        }
+
+    inventory = {
+        "AccountId": "123456789012",
+        "Regions": {"us-east-1": region(2), "eu-west-1": region(1)},
+        "Global": {"DataStores": {"S3Buckets": [{}, {}], "PubliclyAccessibleBuckets": [{}], "UnencryptedBuckets": []}},
+    }
+    report = discover.build_report(inventory, discover.resource_counts_by_region(inventory))
+    md = _assert_renders(report)
+    kpis = {k.label: k for k in report.kpis}
+    assert kpis["EC2 instances"].value == "3"
+    assert kpis["Container clusters"].value == "4"
+    assert kpis["S3 buckets"].tone == "warn"
+    assert kpis["Internet-open SG rules"].value == "3"
+    assert "| Region | VPCs | EC2 Instances |" in md

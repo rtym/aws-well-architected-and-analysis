@@ -19,6 +19,8 @@ from pathlib import Path
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PLUGIN_ROOT))
 
+from shared.analysis import checks as engine  # noqa: E402
+from shared.analysis import security_checks  # noqa: E402
 from shared.awslib.cli import base_parser, formats_tuple, make_context, resolve_regions  # noqa: E402
 from shared.awslib.collectors import (  # noqa: E402
     backup,
@@ -140,6 +142,83 @@ PILLAR_EVIDENCE_SUMMARY = {
 }
 
 
+def security_bundle(evidence: dict) -> dict:
+    """Reshape the evidence pack into the bundle the security checks read.
+    Evidence this pack doesn't collect (public RDS snapshots, account-level
+    S3 Block Public Access) is left out, so those checks report NO DATA
+    rather than a false PASS."""
+    regions = {}
+    for region, rd in evidence["Regions"].items():
+        regions[region] = {
+            "Security": rd.get("Security") or {},
+            "WideOpenSecurityGroups": (rd.get("Network") or {}).get("WideOpenSecurityGroupRules"),
+            "DefaultSecurityGroupsWithRules": vpc.default_security_groups_with_rules(
+                (rd.get("Network") or {}).get("SecurityGroups") or []
+            ),
+            "Compute": rd.get("Compute") or {},
+            "RdsExposure": data_stores.rds_exposure((rd.get("DataStores") or {}).get("RdsInstances") or []),
+        }
+    sec = evidence["Global"].get("Security") or {}
+    bundle_global = {"IamFindings": sec.get("IamFindings"), "DataStores": evidence["Global"].get("DataStores")}
+    if evidence["Global"].get("CloudTrail") is not None:
+        bundle_global["CloudTrail"] = evidence["Global"]["CloudTrail"]
+    return {"Regions": regions, "Global": bundle_global}
+
+
+def _security_check_section(evidence: dict) -> str:
+    results = security_checks.evaluate_checks(security_bundle(evidence))
+    ordered = sorted(
+        results,
+        key=lambda r: (
+            r.check.question or "SEC99",
+            {engine.FAIL: 0, engine.NO_DATA: 1, engine.PASS: 2}[r.status],
+            engine.SEVERITY_RANK[r.check.severity],
+        ),
+    )
+    rows = [
+        {
+            "Question": r.check.question or "--",
+            "Status": r.status,
+            "Severity": r.check.severity,
+            "Check": r.check.title,
+            "Control": r.check.reference,
+            "Affected": engine.scope_text(r.affected) if r.failed else "--",
+        }
+        for r in ordered
+    ]
+    return (
+        "The security review's deterministic checks run against this evidence pack, ordered by "
+        "the Security pillar question each one informs. A FAIL is evidence against that "
+        "question's best practices, not a rating of it; NO DATA marks evidence this pack doesn't "
+        "collect (run `aws-security-review` for those).\n\n"
+        + findings_table(rows, ["Question", "Status", "Severity", "Check", "Control", "Affected"])
+    )
+
+
+def _add_kpis(report: Report, evidence: dict, pillars: list[str]) -> None:
+    regions = evidence["Regions"]
+    report.add_kpi("Regions", len(regions), ", ".join(list(regions)[:3]) + ("..." if len(regions) > 3 else ""))
+    report.add_kpi("Pillars", len(pillars), "with evidence in this pack")
+    if "security" in pillars:
+        results = security_checks.evaluate_checks(security_bundle(evidence))
+        failed = [r for r in results if r.failed]
+        severe = sum(1 for r in failed if r.check.severity in ("CRITICAL", "HIGH"))
+        evaluated = sum(1 for r in results if r.status != engine.NO_DATA)
+        report.add_kpi(
+            "Security checks failed",
+            f"{len(failed)}/{evaluated}",
+            f"{severe} critical or high",
+            "bad" if severe else ("warn" if failed else "good"),
+        )
+    silent = sum(len(r["Observability"]["AlarmsWithNoActions"]) for r in regions.values())
+    alarms = sum(len(r["Observability"]["Alarms"]) for r in regions.values())
+    report.add_kpi("Alarms without actions", silent, f"of {alarms} CloudWatch alarms", "warn" if silent else "neutral")
+    plans = sum(len(r["Backup"]["BackupPlans"]) for r in regions.values())
+    report.add_kpi("Backup plans", plans, "AWS Backup", "neutral" if plans else "warn")
+    budgets = evidence["Global"]["Cost"].get("Budgets") or []
+    report.add_kpi("Budgets", len(budgets), "AWS Budgets", "neutral" if budgets else "warn")
+
+
 def build_report(evidence: dict, pillars: list[str]) -> Report:
     report = Report(
         title="AWS Well-Architected Review -- Evidence Pack",
@@ -161,12 +240,16 @@ def build_report(evidence: dict, pillars: list[str]) -> Report:
         "the specific resource IDs found here.",
     )
 
+    _add_kpis(report, evidence, pillars)
+
     for pillar in pillars:
         body = []
         for region, region_data in evidence["Regions"].items():
             body.append(f"\n**Region {region}:**\n")
             body.extend(PILLAR_EVIDENCE_SUMMARY[pillar](evidence, region_data))
         report.add_section(pillar.replace("-", " ").title(), "\n".join(body))
+        if pillar == "security":
+            report.add_section("Security Baseline Checks", _security_check_section(evidence), level=3)
 
     iam_findings = evidence["Global"]["Security"]["IamFindings"]
     report.add_section(

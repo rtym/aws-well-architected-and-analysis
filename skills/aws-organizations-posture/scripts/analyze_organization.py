@@ -35,6 +35,35 @@ def collect(ctx, home_region: str) -> dict:
     return organizations.collect_organization_posture(ctx, home_region)
 
 
+def _add_kpis(report: Report, posture: dict) -> None:
+    org = posture.get("Organization") or {}
+    accounts = posture.get("Accounts", [])
+    uncovered = posture.get("AccountsWithoutScpCoverage", [])
+    members = [a for a in accounts if a.get("Id") != org.get("MasterAccountId")]
+    active = sum(1 for a in accounts if a.get("Status", "ACTIVE") == "ACTIVE")
+    report.add_kpi("Accounts", len(accounts), f"{active} active", "neutral")
+    if members:
+        covered = len(members) - len(uncovered)
+        pct = round(100 * covered / len(members))
+        report.add_kpi(
+            "SCP coverage",
+            f"{pct}%",
+            f"{covered} of {len(members)} member accounts",
+            "good" if pct == 100 else "warn" if pct >= 75 else "bad",
+        )
+    restrictive = organizations.restrictive_scps(posture.get("ServiceControlPolicies", []))
+    report.add_kpi("Restrictive SCPs", len(restrictive), "excluding FullAWSAccess", "good" if restrictive else "bad")
+    report.add_kpi("Delegated admins", len(posture.get("DelegatedAdministrators", [])), "registered accounts")
+    for label, key in (("GuardDuty", "GuardDutyOrganizationAdmin"), ("Security Hub", "SecurityHubOrganizationAdmin")):
+        managed = bool(posture.get(key))
+        report.add_kpi(
+            f"{label} org-managed",
+            "yes" if managed else "no",
+            "delegated administrator set" if managed else "configured per account",
+            "good" if managed else "warn",
+        )
+
+
 def build_report(posture: dict) -> Report:
     report = Report(
         title="AWS Organizations Posture",
@@ -65,6 +94,7 @@ def build_report(posture: dict) -> Report:
     policies = posture.get("ServiceControlPolicies", [])
     uncovered = posture.get("AccountsWithoutScpCoverage", [])
     delegated = posture.get("DelegatedAdministrators", [])
+    _add_kpis(report, posture)
 
     report.add_section(
         "Organization Summary",
@@ -86,7 +116,7 @@ def build_report(posture: dict) -> Report:
         for a in accounts:
             status_counts[a.get("Status", "?")] = status_counts.get(a.get("Status", "?"), 0) + 1
         if len(status_counts) > 1 or "ACTIVE" not in status_counts:
-            chart_uri = charts.bar_chart(list(status_counts), list(status_counts.values()), title="Accounts by status", ylabel="Count")
+            chart_uri = charts.bar_chart(list(status_counts), list(status_counts.values()), title="Accounts by status", horizontal=True)
             report.add_section("Account Status", f"![Account status]({chart_uri})")
 
         rows = [{"Account ID": a.get("Id"), "Name": a.get("Name"), "Email": a.get("Email"), "Status": a.get("Status")} for a in accounts]

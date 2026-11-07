@@ -2,6 +2,38 @@
 
 Notable changes to this plugin. Versions track `.claude-plugin/plugin.json`.
 
+## [1.5.0] - 2026-11-07
+
+### Added
+- Scored analysis layer (`shared/analysis/`): checks report PASS, FAIL, or NO DATA. The score is passed ÷ checks with data, the method Security Hub uses for its security score. Includes a per-area breakdown and one prioritized action list.
+- Security review:
+  - 31 checks mapped to Security Hub controls, with severities verified against the controls reference (EC2.19 high-risk ports, EC2.18, Config.1 and others).
+  - Six attack-path correlations: an internet-reachable IMDSv1 instance, a public instance with a high-risk port, a public unencrypted database, exposure without GuardDuty, threats without an audit trail, and public buckets with no account-level backstop.
+  - Threat triage, an executive summary, and priority actions.
+  - `--json-out` now carries an `Analysis` block.
+- DR readiness: seven scored readiness checks mapped to REL questions, plus an ordered fix list.
+- Well-Architected evidence pack: the security checks run per SEC question.
+- Every report now has KPI tiles. Cost adds rightsizing savings, month-over-month change on complete months, and a stacked trend chart. Discovery adds a region × resource matrix.
+
+### Changed
+- Report design:
+  - A cover header with the plugin version, a score ring and meters, and KPI tiles.
+  - A table of contents; in the PDF it shows page numbers.
+  - Page footers, severity and status labels, dark mode in HTML, and a phone layout.
+- Markdown keeps severities as plain words.
+- Charts are now SVG and follow one visual system:
+  - single-series bars use one color, and severity bars use severity colors;
+  - value labels and integer ticks;
+  - donuts fold small segments into Other.
+- WeasyPrint no longer logs CSS warnings: browser-only rules are left out of the PDF.
+
+### Fixed
+- Wide PDF tables no longer overflow the page or split words mid-word.
+- Access Analyzer evidence now records the analyzers, so zero findings from zero analyzers is NO DATA, not a pass.
+
+### Tests
+- Suite 628 → 806, covering the engine, every check, the attack paths, scorecard and KPI escaping, and PDF rendering with no WeasyPrint warnings.
+
 ## [1.4.1]
 
 ### Fixed
