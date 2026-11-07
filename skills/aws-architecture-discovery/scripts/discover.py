@@ -337,6 +337,29 @@ def vpc_topology_mermaid(region: str, network: dict) -> str:
     return "\n".join(lines)
 
 
+def _add_kpis(report: Report, inventory: dict, region_counts: dict, totals: dict[str, int]) -> None:
+    report.add_kpi("Regions scanned", len(region_counts))
+    for label, keys in (
+        ("VPCs", ("VPCs",)),
+        ("EC2 instances", ("EC2 Instances",)),
+        ("Load balancers", ("Load Balancers",)),
+        ("Container clusters", ("ECS Clusters", "EKS Clusters")),
+        ("RDS instances", ("RDS Instances",)),
+        ("Lambda functions", ("Lambda Functions",)),
+    ):
+        report.add_kpi(label, sum(totals.get(k, 0) for k in keys))
+    global_ds = inventory["Global"]["DataStores"]
+    public = len(global_ds["PubliclyAccessibleBuckets"])
+    report.add_kpi(
+        "S3 buckets",
+        len(global_ds["S3Buckets"]),
+        f"{public} not fully blocking public access" if public else "all block public access",
+        "warn" if public else "neutral",
+    )
+    open_rules = sum(len(r["Network"]["WideOpenSecurityGroupRules"]) for r in inventory["Regions"].values())
+    report.add_kpi("Internet-open SG rules", open_rules, "0.0.0.0/0 or ::/0 inbound", "warn" if open_rules else "neutral")
+
+
 def build_report(inventory: dict, region_counts: dict[str, dict[str, int]]) -> Report:
     report = Report(
         title="AWS Architecture Discovery",
@@ -353,14 +376,19 @@ def build_report(inventory: dict, region_counts: dict[str, dict[str, int]]) -> R
         ),
     )
 
-    categories = list(region_counts)
-    series = {}
-    for region in categories:
-        for resource, count in region_counts[region].items():
-            series.setdefault(resource, []).append(count)
-    if categories:
-        chart_uri = charts.grouped_bar_chart(categories, series, title="Resource counts by region", ylabel="Count")
-        report.add_section("Resource Inventory Summary", f"![Resource counts]({chart_uri})")
+    totals: dict[str, int] = {}
+    for counts in region_counts.values():
+        for resource, count in counts.items():
+            totals[resource] = totals.get(resource, 0) + count
+    _add_kpis(report, inventory, region_counts, totals)
+    if region_counts:
+        chart_uri = charts.bar_chart(list(totals), list(totals.values()), title="Resources across all scanned regions", horizontal=True)
+        body = f"![Resource counts]({chart_uri})"
+        if len(region_counts) > 1:
+            resources = list(totals)
+            rows = [{"Region": region, **counts} for region, counts in region_counts.items()]
+            body += "\n\n" + findings_table(rows, ["Region", *resources])
+        report.add_section("Resource Inventory Summary", body)
 
     for region, data in inventory["Regions"].items():
         network = data["Network"]

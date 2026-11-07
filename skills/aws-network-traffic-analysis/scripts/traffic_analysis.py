@@ -43,6 +43,26 @@ def collect(ctx, region: str, log_group: str, lookback_hours: int) -> dict:
     }
 
 
+def _add_kpis(report: Report, data: dict) -> None:
+    flow = data["FlowLogAnalysis"]
+    total_bytes = sum(float(r.get("totalBytes", 0) or 0) for r in flow.get("traffic_by_protocol", []))
+    report.add_kpi("Traffic observed", charts.format_value(total_bytes, "bytes"), "all protocols in the window")
+    rejects = sum(int(float(r.get("rejects", 0) or 0)) for r in flow.get("rejected_traffic", []))
+    report.add_kpi("Rejected flows", charts.format_value(rejects, "count"), "top source/destination/port groups", "warn" if rejects else "good")
+    scans = len(flow.get("port_scan_candidates", []))
+    report.add_kpi("Port-scan suspects", scans, f">= {nt.PORT_SCAN_DISTINCT_PORT_THRESHOLD} distinct ports", "bad" if scans else "good")
+    egress = flow.get("top_external_egress", [])
+    report.add_kpi("External destinations", len({r.get("dstAddr") for r in egress}), "in the top egress flows")
+    findings = data["NetworkFindings"]
+    high = sum(1 for f in findings if float(f.get("Severity", 0) or 0) >= 7.0)
+    report.add_kpi(
+        "GuardDuty network findings",
+        len(findings),
+        f"{high} high or critical" if findings else "none open",
+        "bad" if high else ("warn" if findings else "good"),
+    )
+
+
 def build_report(data: dict, region: str, log_group: str) -> Report:
     report = Report(
         title="AWS VPC Network Traffic Analysis",
@@ -60,12 +80,13 @@ def build_report(data: dict, region: str, log_group: str) -> Report:
     )
 
     flow = data["FlowLogAnalysis"]
+    _add_kpis(report, data)
 
     top_talkers = flow.get("top_talkers_by_bytes", [])
     if top_talkers:
         labels = [f"{r['srcAddr']}→{r['dstAddr']}" for r in top_talkers[:10]]
         values = [float(r.get("totalBytes", 0)) for r in top_talkers[:10]]
-        chart_uri = charts.bar_chart(labels, values, title="Top talkers by bytes transferred", ylabel="Bytes", horizontal=True)
+        chart_uri = charts.bar_chart(labels, values, title="Top talkers by bytes transferred", horizontal=True, value_format="bytes")
         report.add_section("Top Talkers", f"![Top talkers]({chart_uri})")
     else:
         report.add_section("Top Talkers", "No flow log records in this window.")
@@ -74,7 +95,7 @@ def build_report(data: dict, region: str, log_group: str) -> Report:
     if protocol_mix:
         labels = [r.get("protocol", "?") for r in protocol_mix]
         values = [float(r.get("totalBytes", 0)) for r in protocol_mix]
-        chart_uri = charts.pie_chart(labels, values, title="Traffic volume by protocol")
+        chart_uri = charts.donut_chart(labels, values, title="Traffic volume by protocol", value_format="bytes")
         report.add_section("Protocol Mix", f"![Protocol mix]({chart_uri})")
     else:
         report.add_section("Protocol Mix", "No flow log records in this window.")

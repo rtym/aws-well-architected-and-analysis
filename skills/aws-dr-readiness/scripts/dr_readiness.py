@@ -17,10 +17,12 @@ from pathlib import Path
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PLUGIN_ROOT))
 
+from shared.analysis import checks as engine  # noqa: E402
+from shared.analysis import dr_checks  # noqa: E402
 from shared.awslib.cli import base_parser, formats_tuple, make_context, resolve_regions  # noqa: E402
 from shared.awslib.collectors import backup, data_stores, dr  # noqa: E402
 from shared.reporting import charts, jsonutil  # noqa: E402
-from shared.reporting.report import Report, findings_table  # noqa: E402
+from shared.reporting.report import Report, ScoreArea, Scorecard, findings_table, tone_for_score  # noqa: E402
 
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -69,6 +71,80 @@ def _merge_backup(regions: dict) -> dict:
     return merged
 
 
+def _add_headline(report: Report, data: dict, results: list) -> None:
+    overall = engine.score(results)
+    by_domain = engine.scores_by_domain(results)
+    areas = [
+        ScoreArea(d, by_domain[d].score, f"{by_domain[d].passed} of {by_domain[d].evaluated} passed" if by_domain[d].evaluated else "no data")
+        for d in dr_checks.DOMAINS
+        if d in by_domain
+    ]
+    detail = f"{overall.passed} of {overall.evaluated} checks passed"
+    if overall.no_data:
+        detail += f"; {overall.no_data} not applicable or without data"
+    report.scorecard = Scorecard(
+        label="DR readiness",
+        score=overall.score,
+        band=engine.band(overall.score),
+        detail=detail,
+        tone=tone_for_score(overall.score),
+        areas=areas,
+        method=(
+            "Score = passed checks / checks with data. A check passes when the recovery mechanism "
+            "exists; whether it meets the business's RTO and RPO is a separate judgment."
+        ),
+    )
+    summary = data["Summary"]
+    b = summary["Backup"]
+    rds = summary["Rds"]
+    instances = dr_checks.rds_instance_count(data)
+    single_az = len(rds["SingleAzInstances"]) + len(rds.get("SingleAzClusters", []))
+    report.add_kpi("Backup plans", b["PlanCount"], f"{b['PlansWithCrossRegionCopy']} with cross-region copy", "good" if b["PlanCount"] else "bad")
+    report.add_kpi("Protected resources", b["ProtectedResourceCount"], "with AWS Backup recovery points", "good" if b["ProtectedResourceCount"] else "bad")
+    report.add_kpi("Failed backup jobs", b["RecentFailedJobs"], "recent", "warn" if b["RecentFailedJobs"] else "good")
+    report.add_kpi(
+        "Single-AZ databases",
+        single_az,
+        f"of {instances} RDS instance(s)" if instances else "no RDS instances",
+        "warn" if single_az else ("good" if instances else "neutral"),
+    )
+    s3 = summary["S3"]
+    buckets = len(s3["ReplicatedBuckets"]) + len(s3["UnreplicatedBuckets"])
+    report.add_kpi("S3 replication", f"{len(s3['ReplicatedBuckets'])}/{buckets}", "buckets replicating", "neutral")
+    report.add_kpi("Health checks", len(summary["Route53HealthChecks"]), "Route 53", "neutral")
+
+
+def _checks_body(results: list) -> str:
+    ordered = sorted(
+        results,
+        key=lambda r: ({engine.FAIL: 0, engine.NO_DATA: 1, engine.PASS: 2}[r.status], engine.SEVERITY_RANK[r.check.severity]),
+    )
+    rows = [
+        {
+            "Status": r.status,
+            "Severity": r.check.severity,
+            "Check": r.check.title,
+            "WA question": r.check.question or "--",
+            "Affected": engine.scope_text(r.affected) if r.failed else "--",
+        }
+        for r in ordered
+    ]
+    body = (
+        "Each check tests whether a recovery mechanism is configured. NO DATA means the check "
+        "doesn't apply (no RDS instances, no hosted zone) or the evidence couldn't be read. "
+        "**WA question** is the Reliability question the check informs.\n\n"
+        + findings_table(rows, ["Status", "Severity", "Check", "WA question", "Affected"])
+    )
+    failed = [r for r in ordered if r.failed]
+    if failed:
+        fixes = [
+            {"#": n, "Severity": r.check.severity, "Action": f"{r.check.remediation}\n_{r.check.finding}_", "Effort": r.check.effort}
+            for n, r in enumerate(failed, start=1)
+        ]
+        body += "\n\n**What to fix, in order:**\n\n" + findings_table(fixes, ["#", "Severity", "Action", "Effort"])
+    return body
+
+
 def build_report(data: dict) -> Report:
     report = Report(
         title="AWS Disaster Recovery Readiness",
@@ -78,11 +154,15 @@ def build_report(data: dict) -> Report:
             "actually has configured: AWS Backup coverage, how its RDS "
             "databases would survive an Availability Zone or region failure, "
             "S3 replication, and whether DNS failover is even possible. "
-            "Start with the Backup Coverage Summary; read each later section "
+            "Start with the Readiness Checks; read each later section "
             "against the recovery-time objectives the business has stated, "
             "not against the most resilient tier by default."
         ),
     )
+
+    results = dr_checks.evaluate_checks(data)
+    _add_headline(report, data, results)
+    report.add_section("Readiness Checks", _checks_body(results))
 
     summary = data["Summary"]
     b = summary["Backup"]
@@ -111,7 +191,7 @@ def build_report(data: dict) -> Report:
                 len(rds["CrossRegionOrGlobalClusters"]),
             ],
             title="RDS DR posture",
-            ylabel="Count",
+            horizontal=True,
         )
         report.add_section(
             "RDS Disaster Recovery Signals",

@@ -80,6 +80,86 @@ def monthly_cost_series(cost_by_service: list[dict]) -> tuple[list[str], dict[st
     return months, series
 
 
+def service_totals(cost_by_service: list[dict]) -> dict[str, float]:
+    """Total spend per service over the whole window, every service."""
+    totals: dict[str, float] = {}
+    for period in cost_by_service:
+        for group in period.get("Groups", []):
+            service = group["Keys"][0]
+            totals[service] = totals.get(service, 0.0) + float(group["Metrics"]["UnblendedCost"]["Amount"])
+    return totals
+
+
+def complete_months(cost_by_service: list[dict]) -> list[tuple[str, float]]:
+    """(month start, total) for periods covering a whole calendar month.
+    The first and last periods of a lookback window are usually partial,
+    and comparing a partial month with a full one overstates the change."""
+    months = []
+    for period in cost_by_service:
+        start, end = period["TimePeriod"]["Start"], period["TimePeriod"]["End"]
+        if start.endswith("-01") and end.endswith("-01") and end > start:
+            total = sum(float(g["Metrics"]["UnblendedCost"]["Amount"]) for g in period.get("Groups", []))
+            months.append((start[:7], total))
+    return months
+
+
+def rightsizing_monthly_savings(rec: dict) -> float:
+    """Estimated monthly savings of one Cost Explorer rightsizing
+    recommendation: the terminate estimate, or the default (else first)
+    modify target's estimate."""
+    def _amount(value) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    if rec.get("RightsizingType") == "TERMINATE":
+        return _amount((rec.get("TerminateRecommendationDetail") or {}).get("EstimatedMonthlySavings"))
+    targets = (rec.get("ModifyRecommendationDetail") or {}).get("TargetInstances") or []
+    if not targets:
+        return 0.0
+    chosen = next((t for t in targets if t.get("DefaultTargetInstance")), targets[0])
+    return _amount(chosen.get("EstimatedMonthlySavings"))
+
+
+def _usd(value: float) -> str:
+    return charts.format_value(value, "usd")
+
+
+def _add_kpis(report: Report, data: dict) -> None:
+    cr = data["CostReport"]
+    totals = service_totals(cr["CostByService"])
+    report.add_kpi("Spend in window", _usd(sum(totals.values())), f"{len(totals)} services")
+    months = complete_months(cr["CostByService"])
+    if len(months) >= 2:
+        (prev_m, prev), (last_m, last) = months[-2], months[-1]
+        change = f"{100 * (last - prev) / prev:+.0f}%" if prev else "n/a"
+        report.add_kpi("Last full month", _usd(last), f"{last_m}: {change} vs {prev_m}")
+    elif months:
+        report.add_kpi("Last full month", _usd(months[-1][1]), months[-1][0])
+    savings = sum(rightsizing_monthly_savings(r) for r in cr.get("RightsizingRecommendations") or [])
+    report.add_kpi(
+        "Rightsizing savings",
+        f"{_usd(savings)}/mo",
+        f"{len(cr.get('RightsizingRecommendations') or [])} recommendation(s)",
+        "warn" if savings else "good",
+    )
+    ri = ((cr.get("ReservationUtilization") or {}).get("Total") or {}).get("UtilizationPercentage")
+    sp = (((cr.get("SavingsPlansUtilization") or {}).get("Total") or {}).get("Utilization") or {}).get("UtilizationPercentage")
+    for label, value in (("RI utilization", ri), ("Savings Plans utilization", sp)):
+        if value is None:
+            continue
+        pct = float(value)
+        report.add_kpi(label, f"{pct:.0f}%", "of purchased commitment used", "good" if pct >= 90 else "warn" if pct >= 70 else "bad")
+    idle = sum(
+        len(i["UnattachedVolumes"]) + len(i["UnassociatedEips"]) + len(i["StoppedInstances"])
+        for i in data["IdleResources"].values()
+    )
+    report.add_kpi("Idle resources", idle, "unattached volumes, unused EIPs, stopped instances", "warn" if idle else "good")
+    budgets = cr.get("Budgets") or []
+    report.add_kpi("Budgets", len(budgets), "configured" if budgets else "none: no spend alerting", "good" if budgets else "bad")
+
+
 def build_report(data: dict, start: str, end: str) -> Report:
     report = Report(
         title="AWS Cost Optimization Report",
@@ -96,15 +176,43 @@ def build_report(data: dict, start: str, end: str) -> Report:
         ),
     )
 
+    _add_kpis(report, data)
     cr = data["CostReport"]
     months, series = monthly_cost_series(cr["CostByService"])
     if months and series:
-        trend_uri = charts.line_chart(months, series, title="Monthly cost by top services", ylabel="USD")
-        report.add_section("Cost Trend", f"![Cost trend]({trend_uri})")
+        # Stacked columns show the total trend and its make-up at once; the
+        # five largest services keep their own color, the rest fold into
+        # Other so no color is reused.
+        top = list(series)[:5]
+        all_by_month = [
+            sum(float(g["Metrics"]["UnblendedCost"]["Amount"]) for g in period.get("Groups", []))
+            for period in cr["CostByService"]
+        ]
+        stacked = {svc: series[svc] for svc in top}
+        other = [max(total - sum(series[svc][i] for svc in top), 0.0) for i, total in enumerate(all_by_month)]
+        if any(v > 0.005 for v in other):
+            stacked["Other"] = other
+        colors = {svc: charts.PALETTE[i] for i, svc in enumerate(top)}
+        colors["Other"] = charts.OTHER_COLOR
+        labels = [m[:7] for m in months]
+        trend_uri = charts.stacked_bar_chart(
+            labels, stacked, title="Monthly cost by service", value_format="usd", colors=colors
+        )
+        report.add_section(
+            "Cost Trend",
+            f"![Cost trend]({trend_uri})\n\n"
+            "The first and last columns may cover part of a month, depending on where the window starts and ends.",
+        )
 
-        total_by_service = {svc: sum(v) for svc, v in series.items()}
-        pie_uri = charts.pie_chart(list(total_by_service), list(total_by_service.values()), title="Cost share (top services)")
-        report.add_section("Cost Distribution", f"![Cost distribution]({pie_uri})")
+        totals = service_totals(cr["CostByService"])
+        pie_uri = charts.donut_chart(list(totals), list(totals.values()), title="Cost share by service", value_format="usd")
+        ranked = sorted(totals.items(), key=lambda kv: kv[1], reverse=True)[:10]
+        grand = sum(totals.values()) or 1.0
+        top_rows = [{"Service": svc, "Spend": _usd(v), "Share": f"{100 * v / grand:.1f}%"} for svc, v in ranked]
+        report.add_section(
+            "Cost Distribution",
+            f"![Cost distribution]({pie_uri})\n\n" + findings_table(top_rows, ["Service", "Spend", "Share"]),
+        )
 
     ri_util = cr.get("ReservationUtilization") or {}
     sp_util = cr.get("SavingsPlansUtilization") or {}
@@ -138,17 +246,21 @@ def build_report(data: dict, start: str, end: str) -> Report:
 
     rightsizing = cr.get("RightsizingRecommendations") or []
     if rightsizing:
+        ranked = sorted(rightsizing, key=rightsizing_monthly_savings, reverse=True)
         rows = [
             {
                 "Resource": r.get("CurrentInstance", {}).get("ResourceId", "?"),
                 "Action": r.get("RightsizingType", "?"),
+                "Est. monthly savings": _usd(rightsizing_monthly_savings(r)),
                 "Finding": r.get("FindingReasonCodes", []),
             }
-            for r in rightsizing[:25]
+            for r in ranked[:25]
         ]
         report.add_section(
             "Rightsizing Recommendations (Cost Explorer)",
-            findings_table(rows, ["Resource", "Action", "Finding"]),
+            "Largest estimated saving first. Estimates come from Cost Explorer and assume the "
+            "recommended change is made for a full month.\n\n"
+            + findings_table(rows, ["Resource", "Action", "Est. monthly savings", "Finding"]),
         )
     else:
         report.add_section("Rightsizing Recommendations (Cost Explorer)", "No rightsizing recommendations returned.")
@@ -189,7 +301,7 @@ def build_report(data: dict, start: str, end: str) -> Report:
         )
         counts_by_region = {r["Region"]: r["Unattached EBS"] + r["Unassociated EIPs"] + r["Stopped Instances"] for r in idle_rows}
         if any(counts_by_region.values()):
-            waste_uri = charts.bar_chart(list(counts_by_region), list(counts_by_region.values()), title="Idle resource candidates by region", ylabel="Count")
+            waste_uri = charts.bar_chart(list(counts_by_region), list(counts_by_region.values()), title="Idle resource candidates by region", horizontal=True)
             report.add_section("Idle Resource Chart", f"![Idle resources]({waste_uri})")
 
     ta_checks = cr.get("TrustedAdvisorCostChecks") or []

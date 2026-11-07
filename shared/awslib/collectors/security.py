@@ -229,14 +229,28 @@ def iam_findings(
 
 
 # --------------------------------------------------------------- IAM Access Analyzer
+@ignore_access_denied(default=lambda: None)
+def access_analyzers(ctx: AwsContext, region: str) -> list[dict] | None:
+    """The analyzers in the region (name, type, status), or None when they
+    couldn't be listed. Zero analyzers means zero findings proves nothing,
+    so the security checks need this alongside the findings."""
+    aa = ctx.client("accessanalyzer", region=region)
+    return [
+        {"arn": a["arn"], "name": a.get("name"), "type": a.get("type"), "status": a.get("status")}
+        for a in paginate(aa, "list_analyzers", "analyzers")
+    ]
+
+
 @ignore_access_denied(default=list)
-def access_analyzer_findings(ctx: AwsContext, region: str) -> list[dict]:
+def access_analyzer_findings(ctx: AwsContext, region: str, analyzers: list[dict] | None = None) -> list[dict]:
     """Active findings from every analyzer in the region. Uses
     ListFindingsV2: the original ListFindings only covers external-access
     analyzers, while unused-access and internal-access findings are
-    available only through V2 (same IAM action, access-analyzer:ListFindings)."""
+    available only through V2 (same IAM action, access-analyzer:ListFindings).
+    Pass the region's `access_analyzers()` result to skip listing them again."""
     aa = ctx.client("accessanalyzer", region=region)
-    analyzers = list(paginate(aa, "list_analyzers", "analyzers"))
+    if analyzers is None:
+        analyzers = list(paginate(aa, "list_analyzers", "analyzers"))
     findings = []
     for analyzer in analyzers:
         findings.extend(
@@ -396,6 +410,7 @@ def config_recorder_status(ctx: AwsContext, region: str) -> dict:
 
 
 def collect_region_security(ctx: AwsContext, region: str) -> dict:
+    analyzers = access_analyzers(ctx, region)
     return {
         "Region": region,
         "GuardDuty": guardduty_status(ctx, region),
@@ -405,7 +420,8 @@ def collect_region_security(ctx: AwsContext, region: str) -> dict:
         "SecurityHubStandardsSummary": securityhub_standards_summary(ctx, region),
         "Inspector2": inspector2_status(ctx, region),
         "Macie": macie_status(ctx, region),
-        "AccessAnalyzerFindings": access_analyzer_findings(ctx, region),
+        "AccessAnalyzers": analyzers,
+        "AccessAnalyzerFindings": access_analyzer_findings(ctx, region, analyzers),
         "ConfigRuleCompliance": config_rule_compliance(ctx, region),
         "ConfigRecorder": config_recorder_status(ctx, region),
         "EbsEncryptionByDefault": ebs_encryption_by_default(ctx, region),
