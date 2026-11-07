@@ -1,8 +1,8 @@
 # Diagram conventions (applies to every diagram this plugin produces)
 
-Four rules. They hold for Lucid boards, for hand-authored Mermaid, and for
-the Mermaid the `aws-architecture-discovery` script generates. A diagram
-that breaks any of them is not finished.
+Four rules. They hold for hand-authored Mermaid and for the Mermaid the
+`aws-architecture-discovery` script generates. A diagram that breaks any of
+them is not finished.
 
 ## 1. Every relationship carries its connectivity detail
 
@@ -79,8 +79,7 @@ Rules for it:
 - Include the count, so the legend doubles as the resource inventory.
 - Explain the arrow notation too, not just the shapes.
 - In Mermaid: a `subgraph Legend[...]` holding one node per kind, drawn in
-  that kind's shape. In Lucid: a container placed bottom-left, holding one
-  small instance of each icon used with its text beside it.
+  that kind's shape.
 
 `vpc_topology_mermaid()` in
 `skills/aws-architecture-discovery/scripts/discover.py` implements all four

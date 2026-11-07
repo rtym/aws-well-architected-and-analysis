@@ -112,7 +112,7 @@ def test_discover_build_report_handles_zero_regions_scanned():
 
 
 # The diagram contract these tests pin down is documented in
-# skills/aws-lucid-diagrams/references/diagram-conventions.md: every edge
+# skills/aws-architecture-discovery/references/diagram-conventions.md: every edge
 # labelled with real connectivity, abbreviations expanded, one clause per
 # label, and a legend inventorying the symbols used.
 FULL_NETWORK = {

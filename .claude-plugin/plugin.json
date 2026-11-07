@@ -1,8 +1,8 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin.json",
   "name": "aws-well-architected-and-analysis",
-  "version": "1.5.0",
-  "description": "AWS account analysis toolkit: Well-Architected reviews, cost optimization, security posture, architecture discovery & gap analysis, VPC network traffic analysis, Lucid diagrams, Organizations posture, and DR readiness, with Markdown/HTML/PDF reporting.",
+  "version": "1.6.0",
+  "description": "AWS account analysis toolkit: Well-Architected reviews, cost optimization, security posture, architecture discovery & gap analysis, VPC network traffic analysis, Organizations posture, and DR readiness, with Markdown/HTML/PDF reporting.",
   "license": "MIT",
   "author": { "name": "Roman Tymoshuk" }
 }

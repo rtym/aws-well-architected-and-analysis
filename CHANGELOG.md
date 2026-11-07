@@ -2,6 +2,14 @@
 
 Notable changes to this plugin. Versions track `.claude-plugin/plugin.json`.
 
+## [1.6.0] - 2026-11-07
+
+### Removed
+- The `aws-lucid-diagrams` skill, its icon-and-layout guide, and the Lucid MCP setup steps in the README. Architecture diagrams still come from `aws-architecture-discovery`, as Mermaid in its report.
+
+### Changed
+- `diagram-conventions.md` moved to `skills/aws-architecture-discovery/references/`, the only skill that still draws diagrams, and lost its Lucid-specific lines. The four rules are unchanged.
+
 ## [1.5.0] - 2026-11-07
 
 ### Added

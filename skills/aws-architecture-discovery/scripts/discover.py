@@ -72,7 +72,7 @@ def resource_counts_by_region(inventory: dict) -> dict[str, dict[str, int]]:
 # Mermaid topology rendering
 #
 # Diagram contract (kept in sync with
-# skills/aws-lucid-diagrams/references/diagram-conventions.md):
+# skills/aws-architecture-discovery/references/diagram-conventions.md):
 #   1. every edge is labelled with the actual connectivity -- destination
 #      range, route table, protocol/port and direction, never a bare line;
 #   2. abbreviations are expanded the first time they appear, in the node
