@@ -115,7 +115,9 @@ IP address in the flow logs actually belongs to).
 
 1. If every query returned empty results, the report says so explicitly
    and points at `references/flow-logs-setup.md` rather than implying a
-   clean bill of health.
+   clean bill of health. If the report has an Incomplete Queries section,
+   the sections those queries feed are partial: rerun with a shorter
+   `--lookback-hours` before drawing conclusions from them.
 2. Every "possible port scan" or "top external egress" entry is presented
    as a lead to investigate, with the corroborating (or non-corroborating)
    GuardDuty cross-reference stated -- never asserted as confirmed

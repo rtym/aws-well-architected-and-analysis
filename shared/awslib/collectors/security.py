@@ -139,13 +139,20 @@ def securityhub_standards_summary(ctx: AwsContext, region: str) -> list[dict]:
 
 
 # --------------------------------------------------------------------- IAM
+CREDENTIAL_REPORT_ATTEMPTS = 30
+CREDENTIAL_REPORT_WAIT_SECONDS = 2
+
 def iam_credential_report(ctx: AwsContext) -> list[dict]:
+    """The IAM credential report, generated on demand. AWS usually finishes
+    it in a few seconds but can take longer in an account with many users;
+    ten one-second tries gave up early there and the read that followed
+    failed with ReportInProgress. Waits up to a minute now."""
     iam = ctx.client("iam")
-    for _ in range(10):
+    for _ in range(CREDENTIAL_REPORT_ATTEMPTS):
         resp = iam.generate_credential_report()
         if resp["State"] == "COMPLETE":
             break
-        time.sleep(1)
+        time.sleep(CREDENTIAL_REPORT_WAIT_SECONDS)
     report = iam.get_credential_report()
     text = report["Content"].decode("utf-8")
     return list(csv.DictReader(io.StringIO(text)))
@@ -325,7 +332,12 @@ def kms_keys_without_rotation(ctx: AwsContext, region: str) -> list[dict]:
             # A key's own policy can deny Describe/GetKeyRotationStatus even
             # when ListKeys succeeds -- skip that key, keep scanning the rest.
             code = exc.response.get("Error", {}).get("Code", "")
-            if code in {"AccessDenied", "AccessDeniedException", "NotFoundException"}:
+            if code in {"AccessDenied", "AccessDeniedException"}:
+                # Named in the evidence: a key nobody could read is not a
+                # key that rotates.
+                ctx.record_denied("kms_keys_without_rotation", region, code, exc.operation_name, key["KeyId"])
+                continue
+            if code == "NotFoundException":
                 continue
             raise
     return flagged

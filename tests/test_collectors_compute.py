@@ -110,6 +110,9 @@ def test_http_listener_that_redirects_to_https_is_not_plaintext():
                 {"Protocol": "HTTP", "Port": 8082},
                 {"Protocol": "HTTPS", "Port": 443, "DefaultActions": [{"Type": "forward"}]},
                 {"Protocol": "TCP", "Port": 5432, "DefaultActions": [{"Type": "forward"}]},
+                # TLS passthrough on a Network Load Balancer: the targets
+                # terminate TLS, so this is not a plaintext listener.
+                {"Protocol": "TCP", "Port": 443, "DefaultActions": [{"Type": "forward"}]},
             ],
         }
     ]

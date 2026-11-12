@@ -550,3 +550,253 @@ def test_inventory_and_cost_reports_add_the_access_section(script):
     import inspect
 
     assert "access.add_section(report, " in inspect.getsource(getattr(fixtures, script).build_report)
+
+
+# ------------------------------------------------- one resource out of many
+def test_a_kms_key_that_denies_the_scan_is_recorded_and_stops_a_pass(ctx):
+    _, stub = install_stub(ctx, "kms", region="us-east-1")
+    stub.add_response("list_keys", {"Keys": [{"KeyId": "k-denied"}, {"KeyId": "k-gone"}]}, {})
+    stub.add_client_error("describe_key", service_error_code="AccessDeniedException")
+    stub.add_client_error("describe_key", service_error_code="NotFoundException")
+    assert security.kms_keys_without_rotation(ctx, "us-east-1") == []
+    assert ctx.denied == [
+        {"Collector": "kms_keys_without_rotation", "Operation": "DescribeKey", "Region": "us-east-1", "Code": "AccessDeniedException", "Resource": "k-denied"}
+    ]
+
+    data = clean_bundle()
+    data[access.KEY] = list(ctx.denied)
+    result = _result(data, "kms-rotation")
+    assert result.status == engine.NO_DATA
+    assert result.note == sc.DENIED_NOTE + " KMS keys not read: 1."
+    # The rest of the region's evidence is intact: only the key was unread.
+    assert "KmsKeysWithoutRotation" in sc.readable_evidence(data)["Regions"]["us-east-1"]["Security"]
+
+    data["Regions"]["us-east-1"]["Security"]["KmsKeysWithoutRotation"] = [{"KeyId": "k-flag"}]
+    result = _result(data, "kms-rotation")
+    assert result.status == engine.FAIL and result.note == sc.PARTIAL_NOTE + " KMS keys not read: 1."
+
+
+def test_a_key_unread_in_one_region_does_not_touch_another():
+    data = clean_bundle()
+    data["Regions"]["eu-west-1"] = copy.deepcopy(data["Regions"]["us-east-1"])
+    data["Regions"]["eu-west-1"]["Security"]["KmsKeysWithoutRotation"] = [{"KeyId": "k-eu"}]
+    data[access.KEY] = [_denied("kms_keys_without_rotation", "us-east-1", Resource="k-us")]
+    result = _result(data, "kms-rotation")
+    assert result.status == engine.FAIL and [a.region for a in result.affected] == ["eu-west-1"]
+
+
+def test_a_failure_is_marked_partial_even_when_the_denied_region_added_nothing():
+    """The unread region contributes no affected resources either way, so
+    comparing counts can't see it; the note still has to be there."""
+    data = clean_bundle(UnencryptedEbsVolumes=[{"VolumeId": "vol-1"}])
+    data["Regions"]["eu-west-1"] = copy.deepcopy(clean_bundle()["Regions"]["us-east-1"])
+    assert _result(data, "ebs-volume-encryption").note == ""
+    data[access.KEY] = [_denied("unencrypted_ebs_volumes", "eu-west-1")]
+    result = _result(data, "ebs-volume-encryption")
+    assert result.status == engine.FAIL and len(result.affected) == 1
+    assert result.note == sc.PARTIAL_NOTE
+    untouched = [r for r in sc.evaluate_checks(data) if r.note and r.check.id != "ebs-volume-encryption"]
+    assert untouched == []
+
+
+def test_denied_account_wide_evidence_is_found_without_any_region():
+    data = {"Regions": {}, "Global": {"AccountPublicAccessBlock": None}, access.KEY: [_denied("account_public_access_block", "global")]}
+    result = _result(data, "s3-account-bpa")
+    assert result.status == engine.NO_DATA and result.note == sc.DENIED_NOTE
+
+
+# ------------------------------------------- evidence tables say "unknown"
+def test_security_evidence_tables_show_unknown_not_zero_for_denied_evidence():
+    data = fixtures._security_data()
+    data["Global"]["CloudTrail"] = {"Trails": [], "HasMultiRegionTrail": False, "HasLoggingTrail": False, "HasLoggingMultiRegionTrail": False, "HasLogFileValidation": False}
+    data["Global"]["AccountPublicAccessBlock"] = None
+    data["Global"]["DataStores"]["BucketsNotRead"] = [{"Name": "locked", "Settings": ["PublicAccessBlock"]}]
+    data[access.KEY] = [
+        _denied("unencrypted_ebs_volumes"),
+        _denied("guardduty_findings"),
+        _denied("describe_trails"),
+        _denied("account_public_access_block", "global"),
+    ]
+    report = security_scan.build_report(data)
+    body = {s.title: s.body_md for s in report.sections}
+    assert "| us-east-1 | on | unknown | 0 | 0 |" in body["Encryption Posture (EBS and KMS)"]
+    assert "| us-east-1 | unknown | 0 | 0 |" in body["Threat Findings"]
+    assert "Trails could not be listed" in body["CloudTrail"] and "NO -- gap" not in body["CloudTrail"]
+    s3 = body["S3 Exposure"]
+    assert "**Account-level S3 Block Public Access:** unknown" in s3
+    assert "**Buckets the scan couldn't read:** 1" in s3
+    assert "among those the scan could read" in s3
+    fixtures._assert_renders(report)
+
+
+def test_security_evidence_tables_are_unchanged_when_nothing_was_denied():
+    data = fixtures._security_data()
+    data["Global"]["AccountPublicAccessBlock"] = None
+    body = {s.title: s.body_md for s in security_scan.build_report(data).sections}
+    assert "| us-east-1 | on | 0 | 0 | 0 |" in body["Encryption Posture (EBS and KMS)"]
+    assert "NOT configured -- gap" in body["S3 Exposure"]
+    assert "No publicly-exposed or unencrypted S3 buckets detected." in body["S3 Exposure"]
+    assert "Multi-region trail configured" in body["CloudTrail"]
+
+
+# ------------------------------------------------------------ organizations
+def test_organizations_report_lists_the_denied_call_behind_no_visibility():
+    org = fixtures.analyze_organization
+    posture = {"IsOrganizationsMember": False, access.KEY: [_denied("is_organizations_member", "global", Operation="DescribeOrganization")]}
+    report = org.build_report(posture)
+    assert report.sections[-1].title == access.SECTION_TITLE
+    assert "DescribeOrganization" in report.render_markdown()
+    assert access.SECTION_TITLE not in [s.title for s in org.build_report({"IsOrganizationsMember": False}).sections]
+
+
+def test_organizations_report_lists_denied_calls_for_a_member_too():
+    import inspect
+
+    source = inspect.getsource(fixtures.analyze_organization.build_report)
+    assert source.count("access.add_section(report, posture)") == 2  # the early return and the full report
+
+
+# --------------------------------------------------------------- DR regions
+@pytest.mark.parametrize(
+    "db, region",
+    [
+        ({"DBInstanceArn": "arn:aws:rds:eu-west-1:123456789012:db:app"}, "eu-west-1"),
+        ({"DBClusterArn": "arn:aws:rds:ap-south-1:123456789012:cluster:c"}, "ap-south-1"),
+        ({"AvailabilityZone": "us-east-1a"}, "us-east-1"),
+        ({"AvailabilityZones": ["us-west-2b", "us-west-2c"]}, "us-west-2"),
+        ({"DBInstanceArn": "not-an-arn"}, "global"),
+        ({}, "global"),
+    ],
+)
+def test_dr_findings_name_the_region_the_database_is_in(db, region):
+    assert dr_checks._region_of(db) == region
+
+
+def test_single_az_databases_are_scoped_by_region():
+    data = dr_bundle(
+        Rds={
+            "SingleAzInstances": [{"DBInstanceIdentifier": "db", "DBInstanceArn": "arn:aws:rds:eu-west-1:1:db:db"}],
+            "SingleAzClusters": [{"DBClusterIdentifier": "c", "AvailabilityZones": ["us-east-1a"]}],
+        }
+    )
+    results = {r.check.id: r for r in dr_checks.evaluate_checks(data)}
+    assert engine.scope_text(results["dr-rds-multi-az"].affected) == "1 resource in eu-west-1"
+    assert engine.scope_text(results["dr-rds-cluster-az"].affected) == "1 resource in us-east-1"
+
+
+# --------------------------------------------------------- traffic analysis
+def test_traffic_report_says_which_queries_did_not_finish():
+    data = {
+        "Window": {"Start": "2024-01-01T00:00:00", "End": "2024-01-02T00:00:00"},
+        "FlowLogAnalysis": {
+            **{k: [] for k in ("top_talkers_by_bytes", "traffic_by_protocol", "rejected_traffic", "port_scan_candidates", "top_external_egress")},
+            "incomplete_queries": [{"Query": "rejected_traffic", "Status": "Timeout"}],
+        },
+        "NetworkFindings": [],
+    }
+    report = fixtures.traffic_analysis.build_report(data, "us-east-1", "/vpc/flowlogs")
+    assert report.sections[0].title == "Incomplete Queries"
+    md = fixtures._assert_renders(report)
+    assert "| rejected traffic | Timeout |" in md and "not evidence of no traffic" in md
+    data["FlowLogAnalysis"]["incomplete_queries"] = []
+    assert "Incomplete Queries" not in [s.title for s in fixtures.traffic_analysis.build_report(data, "us-east-1", "/vpc/flowlogs").sections]
+
+
+def test_traffic_scan_stops_with_one_line_when_the_log_group_is_missing(monkeypatch, capsys, tmp_path):
+    traffic = fixtures.traffic_analysis
+
+    def missing(*args, **kwargs):
+        _raise("ResourceNotFoundException", "StartQuery")
+
+    monkeypatch.setattr(traffic, "collect", missing)
+    code = traffic.main(["--region", "eu-west-1", "--log-group", "/vpc/nope", "--output-dir", str(tmp_path)])
+    assert code == 2
+    assert "log group '/vpc/nope' was not found in eu-west-1" in capsys.readouterr().err
+    assert list(tmp_path.iterdir()) == []
+
+    def throttled(*args, **kwargs):
+        _raise("ThrottlingException", "StartQuery")
+
+    monkeypatch.setattr(traffic, "collect", throttled)
+    with pytest.raises(ClientError):
+        traffic.main(["--region", "eu-west-1", "--log-group", "/vpc/nope", "--output-dir", str(tmp_path)])
+
+
+# ------------------------------------------------- a scan that can't proceed
+def test_run_turns_a_denied_core_call_into_one_clear_line(capsys):
+    from shared.awslib.cli import run
+
+    def main(argv=None):
+        _raise("UnauthorizedOperation", "DescribeSecurityGroups", "You are not authorized to perform: ec2:DescribeSecurityGroups")
+
+    assert run(main) == 2
+    err = capsys.readouterr().err
+    assert "the scan needs DescribeSecurityGroups and was denied (UnauthorizedOperation)" in err
+    assert "ec2:DescribeSecurityGroups" in err and "PERMISSIONS.md" in err
+    assert "Traceback" not in err
+
+
+def test_run_explains_unusable_credentials(capsys):
+    from botocore.exceptions import NoCredentialsError, ProfileNotFound
+
+    from shared.awslib.cli import run
+
+    def no_credentials(argv=None):
+        raise NoCredentialsError()
+
+    def no_profile(argv=None):
+        raise ProfileNotFound(profile="nope")
+
+    assert run(no_credentials) == 2
+    assert "NoCredentialsError" in capsys.readouterr().err
+    assert run(no_profile) == 2
+    err = capsys.readouterr().err
+    assert "ProfileNotFound" in err and "nope" in err and "--profile" in err
+
+
+def test_run_passes_results_through_and_lets_real_errors_raise():
+    from shared.awslib.cli import run
+
+    assert run(lambda argv=None: 0) == 0
+    assert run(lambda argv=None: argv, ["--x"]) == ["--x"]
+
+    def throttled(argv=None):
+        _raise("ThrottlingException")
+
+    with pytest.raises(ClientError):
+        run(throttled)
+    with pytest.raises(ZeroDivisionError):
+        run(lambda argv=None: 1 / 0)
+
+
+def test_run_reports_a_denial_without_a_message(capsys):
+    from shared.awslib.cli import run
+
+    def main(argv=None):
+        raise ClientError({"Error": {"Code": "AccessDenied"}}, "ListUsers")
+
+    assert run(main) == 2
+    assert "No further detail from AWS." in capsys.readouterr().err
+
+
+def test_every_script_enters_through_run():
+    from pathlib import Path
+
+    scripts = sorted((Path(__file__).resolve().parents[1] / "skills").glob("*/scripts/*.py"))
+    assert len(scripts) == 7
+    for script in scripts:
+        assert "raise SystemExit(run(main))" in script.read_text(), script.name
+
+
+# ------------------------------------------------------ IAM credential report
+def test_credential_report_waits_past_ten_seconds_for_a_large_account(ctx, monkeypatch):
+    waits = []
+    monkeypatch.setattr(security.time, "sleep", waits.append)
+    _, stub = install_stub(ctx, "iam")
+    for _ in range(12):
+        stub.add_response("generate_credential_report", {"State": "INPROGRESS"})
+    stub.add_response("generate_credential_report", {"State": "COMPLETE"})
+    stub.add_response("get_credential_report", {"Content": b"user,mfa_active\nalice,true\n", "ReportFormat": "text/csv"})
+    assert security.iam_credential_report(ctx) == [{"user": "alice", "mfa_active": "true"}]
+    assert len(waits) == 12 and sum(waits) > 10
+    assert security.CREDENTIAL_REPORT_ATTEMPTS * security.CREDENTIAL_REPORT_WAIT_SECONDS == 60

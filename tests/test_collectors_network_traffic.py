@@ -32,14 +32,42 @@ def test_analyze_flow_logs_flags_port_scan_candidates(ctx, monkeypatch):
             return [
                 {"srcAddr": "10.0.0.5", "distinctPorts": "42"},
                 {"srcAddr": "10.0.0.6", "distinctPorts": "3"},
-            ]
-        return []
+            ], "Complete"
+        return [], "Complete"
 
-    monkeypatch.setattr(network_traffic, "run_insights_query", fake_query)
+    monkeypatch.setattr(network_traffic, "query_with_status", fake_query)
 
     result = network_traffic.analyze_flow_logs(ctx, "us-east-1", "/vpc/flowlogs", 0, 100)
 
     assert result["port_scan_candidates"] == [{"srcAddr": "10.0.0.5", "distinctPorts": "42"}]
+    assert result["incomplete_queries"] == []
+
+
+def test_analyze_flow_logs_names_the_queries_that_did_not_finish(ctx, monkeypatch):
+    """A query that timed out returns no rows, which the report would show
+    as "no rejected traffic". A denied query is not listed here: it is in
+    the Access Gaps section already."""
+    statuses = {"rejected_traffic": "Timeout", "top_talkers_by_bytes": "Running", "traffic_by_protocol": "Denied"}
+
+    def fake_query(_ctx, _region, _log_group, query, _start, _end, timeout_s=60):
+        name = next(n for n, q in network_traffic.QUERIES.items() if q == query)
+        return [], statuses.get(name, "Complete")
+
+    monkeypatch.setattr(network_traffic, "query_with_status", fake_query)
+    result = network_traffic.analyze_flow_logs(ctx, "us-east-1", "/vpc/flowlogs", 0, 100)
+    assert result["incomplete_queries"] == [
+        {"Query": "top_talkers_by_bytes", "Status": "Running"},
+        {"Query": "rejected_traffic", "Status": "Timeout"},
+    ]
+
+
+def test_a_denied_insights_query_returns_no_rows_and_is_recorded(ctx):
+    _, stub = install_stub(ctx, "logs", region="us-east-1")
+    stub.add_client_error("start_query", service_error_code="AccessDeniedException")
+    stub.add_client_error("start_query", service_error_code="AccessDeniedException")
+    assert network_traffic.query_with_status(ctx, "us-east-1", "/vpc/fl", "q", 0, 1) == ([], "Denied")
+    assert network_traffic.run_insights_query(ctx, "us-east-1", "/vpc/fl", "q", 0, 1) == []
+    assert [d["Operation"] for d in ctx.denied] == ["StartQuery"]
 
 
 def test_as_int_parses_numeric_strings_and_floats():

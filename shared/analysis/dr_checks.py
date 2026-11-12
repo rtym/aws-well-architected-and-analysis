@@ -38,6 +38,18 @@ def rds_cluster_count(data: dict) -> int:
     return sum(len((r.get("DataStores") or {}).get("RdsClusters") or []) for r in (data.get("Regions") or {}).values())
 
 
+def _region_of(db: dict) -> str:
+    """The region a DB instance or cluster is in, from its ARN or its
+    Availability Zone. The summary lists them account-wide, and without
+    this every one read as "global"."""
+    arn = db.get("DBInstanceArn") or db.get("DBClusterArn") or ""
+    parts = arn.split(":")
+    if len(parts) > 3 and parts[3]:
+        return parts[3]
+    zone = db.get("AvailabilityZone") or next(iter(db.get("AvailabilityZones") or []), "")
+    return zone[:-1] if zone else "global"
+
+
 def _plans(data):
     b = _backup(data)
     if b is None:
@@ -85,7 +97,7 @@ def _single_az_instances(data):
     rds = _summary(data).get("Rds")
     if rds is None or not rds_instance_count(data):
         return None
-    affected = [Affected(str(i.get("DBInstanceIdentifier")), "global", i.get("Engine") or "") for i in rds.get("SingleAzInstances") or []]
+    affected = [Affected(str(i.get("DBInstanceIdentifier")), _region_of(i), i.get("Engine") or "") for i in rds.get("SingleAzInstances") or []]
     return affected or (None if access.was_denied(data, "describe_rds_instances") else [])
 
 
@@ -93,7 +105,7 @@ def _single_az_clusters(data):
     rds = _summary(data).get("Rds")
     if rds is None or "SingleAzClusters" not in rds or not rds_cluster_count(data):
         return None
-    affected = [Affected(str(c.get("DBClusterIdentifier")), "global", c.get("Engine") or "") for c in rds["SingleAzClusters"]]
+    affected = [Affected(str(c.get("DBClusterIdentifier")), _region_of(c), c.get("Engine") or "") for c in rds["SingleAzClusters"]]
     return affected or (None if access.was_denied(data, "describe_rds_clusters") else [])
 
 

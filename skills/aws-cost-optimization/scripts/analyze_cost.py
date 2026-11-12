@@ -18,7 +18,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PLUGIN_ROOT))
 
 from shared.analysis import access  # noqa: E402
-from shared.awslib.cli import base_parser, formats_tuple, make_context  # noqa: E402
+from shared.awslib.cli import base_parser, formats_tuple, make_context, run  # noqa: E402
 from shared.awslib.collectors import compute, cost  # noqa: E402
 from shared.reporting import charts, jsonutil  # noqa: E402
 from shared.reporting.report import Report, findings_table  # noqa: E402
@@ -370,4 +370,4 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run(main))

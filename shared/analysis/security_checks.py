@@ -108,6 +108,10 @@ def readable_evidence(data: dict) -> dict:
     regions = dict(_regions(data))
     global_data = _global(data)
     for entry in denied:
+        if entry.get("Resource"):
+            # One bucket or key was unreadable, not the whole listing; the
+            # checks account for those by name (`_unread_resources`).
+            continue
         collector, region = entry.get("Collector"), entry.get("Region")
         for path in DENIED_REGION_EVIDENCE.get(collector, ()):
             if region in regions:
@@ -507,12 +511,22 @@ def _unencrypted_volumes(data):
     return _per_region(data, getter)
 
 
+def _keys_not_read(data, region: str | None = None) -> list[str]:
+    """KMS keys whose own policy denied the scan (optionally in one region)."""
+    return [
+        str(d["Resource"])
+        for d in access.denied(data)
+        if d.get("Collector") == "kms_keys_without_rotation" and d.get("Resource") and region in (None, d.get("Region"))
+    ]
+
+
 def _kms_rotation(data):
     def getter(region, region_data):
         sec = _security(region_data)
         if "KmsKeysWithoutRotation" not in sec:
             return None
-        return [Affected(str(k.get("KeyId")), region, k.get("Description") or "") for k in sec["KmsKeysWithoutRotation"]]
+        affected = [Affected(str(k.get("KeyId")), region, k.get("Description") or "") for k in sec["KmsKeysWithoutRotation"]]
+        return affected or (None if _keys_not_read(data, region) else [])
 
     return _per_region(data, getter)
 
@@ -624,22 +638,48 @@ CHECKS_BY_ID = {check.id: check for check, _ in CATALOG}
 _BUCKET_CHECKS = {"s3-bucket-public": "PublicAccessBlock", "s3-default-encryption": "Encryption"}
 
 
+def _unread_resources(data: dict, check_id: str) -> tuple[str, int]:
+    """("Buckets", 3) or ("KMS keys", 1): the resources a check couldn't
+    read one by one, as opposed to a whole listing that was denied."""
+    if check_id in _BUCKET_CHECKS:
+        return "Buckets", len(_buckets_not_read(data, _BUCKET_CHECKS[check_id]))
+    if check_id == "kms-rotation":
+        return "KMS keys", len(_keys_not_read(data))
+    return "", 0
+
+
+def _checks_missing_evidence(data: dict) -> set[str]:
+    """IDs of the checks a denied call took evidence from. Found by scoring
+    each region alone, with and without the denials applied: a check that
+    only has data when the denials are ignored was reading an empty default."""
+    regions = _regions(data)
+    scopes = [{**data, "Regions": {name: region}} for name, region in regions.items()] or [data]
+    touched = set()
+    for scope in scopes:
+        read = evaluate(CATALOG, readable_evidence(scope))
+        unread = evaluate(CATALOG, {**scope, access.KEY: []})
+        touched |= {r.check.id for r, u in zip(read, unread, strict=True) if r.status == NO_DATA and u.status != NO_DATA}
+    return touched
+
+
 def evaluate_checks(data: dict) -> list[CheckResult]:
     """Every check, against the evidence the scan could read. A check whose
     evidence was denied is NO DATA with a note saying so; one that fails on
     the part that was read stays a FAIL, with a note that it is partial."""
     readable = readable_evidence(data)
     results = evaluate(CATALOG, readable)
-    if readable is not data:
-        for r, unscrubbed in zip(results, evaluate(CATALOG, data), strict=True):
-            if r.status == NO_DATA and unscrubbed.status != NO_DATA:
-                r.note = DENIED_NOTE
-            elif r.failed and len(r.affected) < len(unscrubbed.affected):
-                r.note = PARTIAL_NOTE
+    missing = _checks_missing_evidence(data) if readable is not data else set()
     for r in results:
-        unread = _buckets_not_read(data, _BUCKET_CHECKS.get(r.check.id, ""))
-        if unread:
-            r.note = (DENIED_NOTE if r.status == NO_DATA else PARTIAL_NOTE) + f" Buckets not read: {len(unread)}."
+        noun, unread = _unread_resources(data, r.check.id)
+        if r.check.id in missing or unread:
+            if r.status == NO_DATA:
+                r.note = DENIED_NOTE
+            elif r.failed:
+                # A failure found in what was read stands, and says so: the
+                # unread part may hold more.
+                r.note = PARTIAL_NOTE
+            if unread and r.note:
+                r.note += f" {noun} not read: {unread}."
     data = readable
     if account_bpa_fully_on(data):
         for r in results:

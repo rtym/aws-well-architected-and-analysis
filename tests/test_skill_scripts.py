@@ -1097,7 +1097,7 @@ def test_analyze_organization_collect_is_a_passthrough(monkeypatch):
 
     monkeypatch.setattr(analyze_organization.organizations, "collect_organization_posture", fake_posture)
     out = analyze_organization.collect(object(), "eu-central-1")
-    assert out == {"IsOrganizationsMember": False}
+    assert out == {"IsOrganizationsMember": False, "AccessDenied": []}
     assert recorded["home_region"] == "eu-central-1"
 
 

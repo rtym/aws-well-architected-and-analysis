@@ -9,13 +9,21 @@ Notable changes to this plugin. Versions track `.claude-plugin/plugin.json`.
 - A region-wide security check passes only when every scanned region was read. One unread region used to be skipped, so the check passed "in every scanned region" on the strength of the others.
 - An S3 bucket whose Block Public Access or encryption settings can't be read (a bucket policy, a missing `s3:Get*` permission) is no longer listed as public or unencrypted. The evidence names it under `BucketsNotRead`, and the two bucket checks report NO DATA when unread buckets are all that stands between them and a pass.
 - Macie's "not enabled" answer (an `AccessDeniedException` with that message) still reads as off. Any other denial from Macie is now treated as a denial.
+- The security report's evidence tables show "unknown" where a call was denied, instead of a zero or "NO -- gap": the encryption and threat-finding counts, the CloudTrail summary, and the account-level Block Public Access line. Buckets the scan couldn't read are counted above the S3 table.
+- A KMS key whose own policy denies the scan was skipped without a trace. It is now recorded, and the rotation check reports NO DATA for it.
+- A failed check carries its "partial" note whenever part of its evidence was denied, including when the unread region added nothing to the count.
+- A scan that is denied a call it can't work without (security groups, instances, the IAM credential report), or whose credentials don't resolve, stops with one line naming the call and exit code 2 instead of a traceback.
+- The network traffic scan stops the same way when the log group doesn't exist, and its report has an Incomplete Queries section when a flow-log query timed out or failed. Those sections used to read as "no such traffic".
+- A TCP listener on port 443 is no longer flagged as unencrypted: that is TLS passthrough on a Network Load Balancer.
+- The IAM credential report is given up to a minute to generate. Ten seconds was too short for accounts with many users, and the scan failed with `ReportInProgress`.
+- DR findings for single-AZ databases name the region the database is in; every one used to read as "global".
 - The security report's priority list is called "the ten most important fixes" only when it holds ten.
 
 ### Added
 - Every denied call is recorded on the `AwsContext` (`ctx.denied`) and saved in the evidence as `AccessDenied`: collector, operation, region, error code, and the resource for per-bucket denials.
-- An **Access Gaps** section in the security, DR, Well-Architected, discovery, cost, and network traffic reports lists the denied calls, so an empty table can be told apart from one the scan couldn't fill. The security report's executive summary says how many checks dropped out because of them.
+- An **Access Gaps** section in every report lists the denied calls, so an empty table can be told apart from one the scan couldn't fill. In the organizations report it shows whether "not part of an organization" was a denied call or a standalone account. The security report's executive summary says how many checks dropped out because of them.
 - The security report's Detection Coverage table shows "unknown" for a service whose status call was denied, and the detection-coverage KPI leaves it out. The DR report shows "n/a" for backup KPIs it couldn't read and marks its backup counts as a lower bound.
-- `shared/analysis/access.py`, and 68 tests in `tests/test_access_denied.py` covering the path from the denied call to the report.
+- `shared/analysis/access.py`, and 91 tests in `tests/test_access_denied.py` covering the path from the denied call to the report.
 
 ## [1.6.0] - 2026-11-07
 

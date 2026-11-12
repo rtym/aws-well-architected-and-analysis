@@ -109,13 +109,22 @@ def _redirects_to_https(listener: dict) -> bool:
     )
 
 
+TLS_PASSTHROUGH_PORT = 443
+
+
 def plaintext_load_balancer_listeners(load_balancers: list[dict]) -> list[dict]:
     """SEC09 evidence: ALB/NLB listeners on HTTP/TCP instead of HTTPS/TLS,
-    excluding HTTP listeners that only redirect to HTTPS."""
+    excluding HTTP listeners that only redirect to HTTPS and TCP listeners
+    on port 443. A TCP listener on 443 is how a Network Load Balancer
+    passes TLS through to targets that terminate it themselves; the
+    listener protocol alone can't show that traffic as plaintext, and
+    flagging it sent readers after load balancers that were set up right."""
     findings = []
     for lb in load_balancers:
         for listener in lb.get("_Listeners", []):
             if listener.get("Protocol") == "HTTP" and _redirects_to_https(listener):
+                continue
+            if listener.get("Protocol") == "TCP" and listener.get("Port") == TLS_PASSTHROUGH_PORT:
                 continue
             if listener.get("Protocol") in ("HTTP", "TCP"):
                 findings.append(

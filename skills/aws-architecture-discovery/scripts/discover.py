@@ -20,7 +20,7 @@ sys.path.insert(0, str(PLUGIN_ROOT))
 from botocore.exceptions import BotoCoreError, ClientError  # noqa: E402
 
 from shared.analysis import access  # noqa: E402
-from shared.awslib.cli import base_parser, formats_tuple, make_context, resolve_regions  # noqa: E402
+from shared.awslib.cli import base_parser, formats_tuple, make_context, resolve_regions, run  # noqa: E402
 from shared.awslib.collectors import compute, containers, data_stores, vpc  # noqa: E402
 from shared.reporting import charts, jsonutil  # noqa: E402
 from shared.reporting.report import Report, findings_table  # noqa: E402
@@ -444,4 +444,4 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run(main))

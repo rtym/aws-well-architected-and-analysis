@@ -29,7 +29,7 @@ from botocore.exceptions import BotoCoreError, ClientError  # noqa: E402
 from shared.analysis import access  # noqa: E402
 from shared.analysis import checks as engine  # noqa: E402
 from shared.analysis import security_checks  # noqa: E402
-from shared.awslib.cli import base_parser, formats_tuple, make_context, resolve_regions  # noqa: E402
+from shared.awslib.cli import base_parser, formats_tuple, make_context, resolve_regions, run  # noqa: E402
 from shared.awslib.collectors import cloudtrail, compute, data_stores, security, vpc  # noqa: E402
 from shared.reporting import charts, jsonutil  # noqa: E402
 from shared.reporting.report import (  # noqa: E402
@@ -116,6 +116,13 @@ def _rule_risk(rule: dict) -> str:
     if security_checks.opens_unauthorized_port(rule):
         return "Not a web port (EC2.18)"
     return "Web port (80/443)"
+
+
+def _count(container: dict, key: str):
+    """How many items the scan found under `key`, or "unknown" when the key
+    is gone: `readable_evidence` removes what a denied call would have
+    filled, and a zero there would claim the scan looked and found nothing."""
+    return len(container[key]) if container.get(key) is not None else "unknown"
 
 
 def _plural(n: int, word: str, plural: str | None = None) -> str:
@@ -408,6 +415,7 @@ def _threat_sections(report: Report, data: dict) -> None:
     per_region_rows = []
     all_sh_findings = []
     all_gd_findings = []
+    readable = security_checks.readable_evidence(data)["Regions"]
     for region, region_data in data["Regions"].items():
         sec = region_data["Security"]
         gd_findings = sec["GuardDutyFindings"]
@@ -423,8 +431,8 @@ def _threat_sections(report: Report, data: dict) -> None:
         per_region_rows.append(
             {
                 "Region": region,
-                "GuardDuty findings": len(gd_findings),
-                "Security Hub findings": len(sh_findings),
+                "GuardDuty findings": _count(readable[region]["Security"], "GuardDutyFindings"),
+                "Security Hub findings": _count(readable[region]["Security"], "SecurityHubFindings"),
                 "Open security group rules": len(region_data["WideOpenSecurityGroups"]),
             }
         )
@@ -483,8 +491,9 @@ def _evidence_sections(report: Report, data: dict) -> None:
         "The collected evidence behind the checks, area by area, with every affected resource.",
     )
 
+    readable = security_checks.readable_evidence(data)
     ct = data["Global"]["CloudTrail"]
-    ct_lines = [
+    ct_lines = ["- **Trails could not be listed** (see Access Gaps), so nothing below is known."] if "CloudTrail" not in readable["Global"] else [
         f"- **Multi-region trail configured:** {'yes' if ct['HasMultiRegionTrail'] else 'NO -- gap'}",
         f"- **A trail is actively logging:** {'yes' if ct['HasLoggingTrail'] else 'NO -- gap'}",
         f"- **A multi-region trail is logging (CloudTrail.1):** "
@@ -518,7 +527,9 @@ def _evidence_sections(report: Report, data: dict) -> None:
     report.add_section("IAM Hygiene", iam_body, level=3)
 
     account_bpa = data["Global"].get("AccountPublicAccessBlock")
-    if account_bpa is None:
+    if "AccountPublicAccessBlock" in data["Global"] and "AccountPublicAccessBlock" not in readable["Global"]:
+        bpa_line = "unknown (the scan was denied the call; see Access Gaps)"
+    elif account_bpa is None:
         bpa_line = "NOT configured -- gap (per-bucket settings are the only guard)"
     elif all(account_bpa.get(k, False) for k in security_checks.BPA_SETTINGS):
         bpa_line = "all four settings enabled"
@@ -530,10 +541,17 @@ def _evidence_sections(report: Report, data: dict) -> None:
     unencrypted_buckets = data["Global"]["DataStores"]["UnencryptedBuckets"]
     s3_rows = [{"Bucket": b["Name"], "Issue": "Public access not fully blocked"} for b in public_buckets]
     s3_rows += [{"Bucket": b["Name"], "Issue": "No default encryption configured"} for b in unencrypted_buckets]
+    not_read = data["Global"]["DataStores"].get("BucketsNotRead") or []
+    if not_read:
+        s3_intro += (
+            f"- **Buckets the scan couldn't read:** {len(not_read)} (see Access Gaps). "
+            "They are left out of the table below, not cleared by it.\n\n"
+        )
     if s3_rows:
         report.add_section("S3 Exposure", s3_intro + findings_table(s3_rows, ["Bucket", "Issue"]), level=3)
     else:
-        report.add_section("S3 Exposure", s3_intro + "No publicly-exposed or unencrypted S3 buckets detected.", level=3)
+        nothing = "No publicly-exposed or unencrypted S3 buckets among those the scan could read." if not_read else "No publicly-exposed or unencrypted S3 buckets detected."
+        report.add_section("S3 Exposure", s3_intro + nothing, level=3)
 
     standards_rows = []
     for region, region_data in data["Regions"].items():
@@ -600,16 +618,15 @@ def _evidence_sections(report: Report, data: dict) -> None:
     for region, region_data in data["Regions"].items():
         sec = region_data["Security"]
         by_default = sec.get("EbsEncryptionByDefault")
-        unencrypted_vols = sec.get("UnencryptedEbsVolumes", [])
         public_snaps = sec.get("PublicEbsSnapshots", [])
         kms_keys = sec.get("KmsKeysWithoutRotation", [])
         encryption_rows.append(
             {
                 "Region": region,
                 "EBS encryption by default": {True: "on", False: "OFF -- gap"}.get(by_default, "unknown"),
-                "Unencrypted EBS volumes": len(unencrypted_vols),
-                "Public EBS snapshots": len(public_snaps),
-                "KMS keys without rotation": len(kms_keys),
+                "Unencrypted EBS volumes": _count(readable["Regions"][region]["Security"], "UnencryptedEbsVolumes"),
+                "Public EBS snapshots": _count(readable["Regions"][region]["Security"], "PublicEbsSnapshots"),
+                "KMS keys without rotation": _count(readable["Regions"][region]["Security"], "KmsKeysWithoutRotation"),
             }
         )
         for s in public_snaps:
@@ -754,4 +771,4 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run(main))

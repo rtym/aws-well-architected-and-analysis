@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import sys
 
-from .session import AwsContext
+from botocore.exceptions import BotoCoreError, ClientError
+
+from .session import PERMISSION_DENIED_CODES, AwsContext
 
 
 def base_parser(description: str) -> argparse.ArgumentParser:
@@ -48,3 +51,38 @@ def resolve_regions(ctx: AwsContext, args) -> list[str]:
         if parsed:
             return parsed
     return [ctx.session.region_name or "us-east-1"]
+
+
+def run(main, argv=None) -> int:
+    """Run a script's `main`, turning the two failures a user can fix
+    themselves into one clear line instead of a traceback: a denied call
+    that the scan can't work without, and credentials that didn't resolve
+    (no profile, an expired SSO session). Returns 2 for those; anything
+    else still raises, because a traceback is the right report for a bug.
+
+    Calls a scan can work without never get here: their collectors are
+    wrapped in `ignore_access_denied` and show up in the report's Access
+    Gaps section instead.
+    """
+    try:
+        return main(argv)
+    except ClientError as exc:
+        error = exc.response.get("Error", {})
+        if error.get("Code") not in PERMISSION_DENIED_CODES:
+            raise
+        print(
+            f"Stopped: the scan needs {exc.operation_name} and was denied ({error.get('Code')}).\n"
+            f"  {error.get('Message') or 'No further detail from AWS.'}\n"
+            "  Grant the read-only actions in PERMISSIONS.md at the plugin root, then run it again.",
+            file=sys.stderr,
+        )
+        return 2
+    except BotoCoreError as exc:
+        # NoCredentialsError, ProfileNotFound, an expired SSO token, no region.
+        print(
+            f"Stopped: AWS credentials or configuration could not be used ({type(exc).__name__}).\n"
+            f"  {exc}\n"
+            "  Check --profile and --region, or sign in again (for example `aws sso login`).",
+            file=sys.stderr,
+        )
+        return 2

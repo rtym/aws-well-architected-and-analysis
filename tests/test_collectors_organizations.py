@@ -22,6 +22,17 @@ def test_is_organizations_member_false_on_access_denied_not_crash(ctx):
     stub.add_client_error("describe_organization", service_error_code="AccessDeniedException")
 
     assert organizations.is_organizations_member(ctx) is False
+    # Recorded, so the report can tell this from a standalone account.
+    assert ctx.denied == [
+        {"Collector": "is_organizations_member", "Operation": "DescribeOrganization", "Region": "global", "Code": "AccessDeniedException"}
+    ]
+
+
+def test_a_standalone_account_is_not_a_denied_call(ctx):
+    org, stub = install_stub(ctx, "organizations")
+    stub.add_client_error("describe_organization", service_error_code="AWSOrganizationsNotInUseException")
+    assert organizations.is_organizations_member(ctx) is False
+    assert ctx.denied == []
 
 
 def test_describe_organization_returns_none_on_access_denied(ctx):

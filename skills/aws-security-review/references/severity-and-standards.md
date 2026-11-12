@@ -132,6 +132,10 @@ EC2.19's high-risk ports are 20, 21, 22, 23, 25, 110, 135, 143, 445,
 8888, 9200, and 9300. EC2.18 with its default parameters allows only TCP
 80 and 443 to be open to the world.
 
+The listener check flags HTTP listeners that don't redirect to HTTPS and
+TCP listeners, except a TCP listener on port 443: that is how a Network
+Load Balancer passes TLS through to targets that terminate it themselves.
+
 A publicly restorable snapshot (EBS or RDS) is a complete, out-of-band
 copy of the data: treat it at the same severity as a public S3 bucket
 even though no "breach" has been observed.
