@@ -139,8 +139,10 @@ even though no "breach" has been observed.
 ## The posture score
 
 Score = passed checks / (passed + failed checks). Checks with no data are
-left out, as Security Hub leaves out controls with no data. A check fails
-when any resource in any scanned region fails it. Severity does not weight
+left out, as Security Hub leaves out controls with no data. That includes
+checks whose evidence the scan was denied (the report's Access Gaps
+section lists the calls). A check fails when any resource in any scanned
+region fails it, and passes only when every scanned region was read. Severity does not weight
 the score: an account can score 90 with one CRITICAL failure, which is why
 the report always shows the critical and high counts next to it. Bands:
 90+ Strong, 70-89 Fair, 50-69 Weak, below 50 Poor.

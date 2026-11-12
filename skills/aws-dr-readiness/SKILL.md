@@ -71,7 +71,10 @@ Multi-AZ for instances and clusters, Route 53 health checks), each mapped
 to the Reliability question it informs, with an ordered fix list. A
 passing check means the mechanism exists, not that it meets the RTO/RPO:
 keep that distinction in anything you write. Checks that don't apply (no
-RDS, no hosted zone) show NO DATA and don't count toward the score.
+RDS, no hosted zone) show NO DATA and don't count toward the score. So do
+checks whose evidence the scan was denied: the report lists those calls
+under Access Gaps, and a zero count behind one of them means unread, not
+absent. Don't report "no backup plan" from a scan that couldn't list them.
 
 Below that it shows AWS Backup plan/vault/cross-region-copy coverage, an RDS
 DR-signal chart (single-AZ instances and clusters vs. read-replicas vs.

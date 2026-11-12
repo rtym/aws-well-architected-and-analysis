@@ -46,11 +46,27 @@ def list_buckets(ctx: AwsContext) -> list[dict]:
         bucket_region = _bucket_region(s3, b["Name"])
         bucket_client = ctx.client("s3", region=bucket_region) if bucket_region else s3
         b["_Region"] = bucket_region
-        b["_PublicAccessBlock"] = _bucket_public_access_block(bucket_client, b["Name"])
-        b["_Encryption"] = _bucket_encryption(bucket_client, b["Name"])
-        b["_Versioning"] = _bucket_versioning(bucket_client, b["Name"])
-        b["_Replication"] = _bucket_replication(bucket_client, b["Name"])
+        unreadable = []
+        for setting, read in _BUCKET_SETTINGS:
+            value = read(bucket_client, b["Name"])
+            if value is _UNREADABLE:
+                # A bucket policy or a missing permission hid this setting.
+                # None would read as "not configured" and flag the bucket
+                # as public or unencrypted, so the gap is named instead.
+                unreadable.append(setting)
+                value = None
+            b[f"_{setting}"] = value
+        if unreadable:
+            b["_Unreadable"] = unreadable
+            ctx.record_denied(
+                "list_buckets", bucket_region, "AccessDenied", "Get" + ", Get".join(_BUCKET_OPERATIONS[u] for u in unreadable), b["Name"]
+            )
     return buckets
+
+
+# What a per-bucket reader returns when the call was denied, so the caller
+# can tell "couldn't read" from "not configured" (both used to be None).
+_UNREADABLE = object()
 
 
 @ignore_access_denied(default=lambda: None)
@@ -61,12 +77,12 @@ def _bucket_region(s3, name: str) -> str | None:
     return constraint or "us-east-1"
 
 
-@ignore_access_denied(default=lambda: None)
+@ignore_access_denied(default=lambda: _UNREADABLE)
 def _bucket_versioning(s3, name: str):
     return s3.get_bucket_versioning(Bucket=name).get("Status")
 
 
-@ignore_access_denied(default=lambda: None)
+@ignore_access_denied(default=lambda: _UNREADABLE)
 def _bucket_replication(s3, name: str):
     try:
         return s3.get_bucket_replication(Bucket=name)["ReplicationConfiguration"]
@@ -76,7 +92,7 @@ def _bucket_replication(s3, name: str):
         raise
 
 
-@ignore_access_denied(default=lambda: None)
+@ignore_access_denied(default=lambda: _UNREADABLE)
 def _bucket_public_access_block(s3, name: str):
     try:
         return s3.get_public_access_block(Bucket=name)["PublicAccessBlockConfiguration"]
@@ -86,7 +102,7 @@ def _bucket_public_access_block(s3, name: str):
         raise
 
 
-@ignore_access_denied(default=lambda: None)
+@ignore_access_denied(default=lambda: _UNREADABLE)
 def _bucket_encryption(s3, name: str):
     try:
         return s3.get_bucket_encryption(Bucket=name)["ServerSideEncryptionConfiguration"]
@@ -94,6 +110,20 @@ def _bucket_encryption(s3, name: str):
         if exc.response["Error"]["Code"] == "ServerSideEncryptionConfigurationNotFoundError":
             return None
         raise
+
+
+_BUCKET_SETTINGS = (
+    ("PublicAccessBlock", _bucket_public_access_block),
+    ("Encryption", _bucket_encryption),
+    ("Versioning", _bucket_versioning),
+    ("Replication", _bucket_replication),
+)
+_BUCKET_OPERATIONS = {
+    "PublicAccessBlock": "PublicAccessBlock",
+    "Encryption": "BucketEncryption",
+    "Versioning": "BucketVersioning",
+    "Replication": "BucketReplication",
+}
 
 
 def describe_elasticache_clusters(ctx: AwsContext, region: str) -> list[dict]:
@@ -106,9 +136,17 @@ def list_lambda_functions(ctx: AwsContext, region: str) -> list[dict]:
     return list(paginate(lam, "list_functions", "Functions"))
 
 
+def _unread(bucket: dict, setting: str) -> bool:
+    return setting in (bucket.get("_Unreadable") or [])
+
+
 def publicly_accessible_buckets(buckets: list[dict]) -> list[dict]:
+    """Buckets without all four Block Public Access settings. A bucket whose
+    settings couldn't be read is left out; `buckets_not_read` lists it."""
     findings = []
     for b in buckets:
+        if _unread(b, "PublicAccessBlock"):
+            continue
         pab = b.get("_PublicAccessBlock") or {}
         blocked = all(
             pab.get(k, False)
@@ -125,7 +163,12 @@ def publicly_accessible_buckets(buckets: list[dict]) -> list[dict]:
 
 
 def unencrypted_buckets(buckets: list[dict]) -> list[dict]:
-    return [{"Name": b["Name"]} for b in buckets if not b.get("_Encryption")]
+    return [{"Name": b["Name"]} for b in buckets if not b.get("_Encryption") and not _unread(b, "Encryption")]
+
+
+def buckets_not_read(buckets: list[dict]) -> list[dict]:
+    """Buckets with at least one setting the scan was denied, and which."""
+    return [{"Name": b["Name"], "Settings": list(b["_Unreadable"])} for b in buckets if b.get("_Unreadable")]
 
 
 def rds_exposure(instances: list[dict]) -> dict:
@@ -206,4 +249,5 @@ def collect_global_data_stores(ctx: AwsContext) -> dict:
         "S3Buckets": buckets,
         "PubliclyAccessibleBuckets": publicly_accessible_buckets(buckets),
         "UnencryptedBuckets": unencrypted_buckets(buckets),
+        "BucketsNotRead": buckets_not_read(buckets),
     }

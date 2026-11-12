@@ -19,6 +19,7 @@ from pathlib import Path
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PLUGIN_ROOT))
 
+from shared.analysis import access  # noqa: E402
 from shared.analysis import checks as engine  # noqa: E402
 from shared.analysis import security_checks  # noqa: E402
 from shared.awslib.cli import base_parser, formats_tuple, make_context, resolve_regions  # noqa: E402
@@ -85,6 +86,8 @@ def collect(ctx, regions: list[str], workload_id: str | None) -> dict:
     evidence["Global"]["CloudTrail"] = cloudtrail.cloudtrail_posture(ctx, regions[0])
     if workload_id:
         evidence["Workload"] = well_architected.collect_workload_snapshot(ctx, regions[0], workload_id)
+    # Calls the run was denied: a zero count behind one of these is unread.
+    evidence[access.KEY] = access.denied_calls(ctx)
     return evidence
 
 
@@ -162,7 +165,7 @@ def security_bundle(evidence: dict) -> dict:
     bundle_global = {"IamFindings": sec.get("IamFindings"), "DataStores": evidence["Global"].get("DataStores")}
     if evidence["Global"].get("CloudTrail") is not None:
         bundle_global["CloudTrail"] = evidence["Global"]["CloudTrail"]
-    return {"Regions": regions, "Global": bundle_global}
+    return {"Regions": regions, "Global": bundle_global, access.KEY: access.denied(evidence)}
 
 
 def _security_check_section(evidence: dict) -> str:
@@ -190,8 +193,9 @@ def _security_check_section(evidence: dict) -> str:
         "The security review's deterministic checks run against this evidence pack, ordered by "
         "the Security pillar question each one informs. A FAIL is evidence against that "
         "question's best practices, not a rating of it; NO DATA marks evidence this pack doesn't "
-        "collect (run `aws-security-review` for those).\n\n"
+        "collect (run `aws-security-review` for those) or a call the run was denied.\n\n"
         + findings_table(rows, ["Question", "Status", "Severity", "Check", "Control", "Affected"])
+        + "".join(f"\n\n_{escape_text(r.check.title)}: {escape_text(r.note)}_" for r in ordered if r.note)
     )
 
 
@@ -241,6 +245,7 @@ def build_report(evidence: dict, pillars: list[str]) -> Report:
     )
 
     _add_kpis(report, evidence, pillars)
+    access.add_section(report, evidence)
 
     for pillar in pillars:
         body = []

@@ -2,6 +2,21 @@
 
 Notable changes to this plugin. Versions track `.claude-plugin/plugin.json`.
 
+## [1.7.0] - 2026-11-12
+
+### Fixed
+- A denied API call no longer scores as a result. Collectors return the same empty value when a call is denied as when there is nothing to find, and the checks scored that value as written. A role without `ec2:DescribeVolumes` passed "every EBS volume is encrypted"; one without `guardduty:ListDetectors` failed "GuardDuty is enabled" and raised a false "exposure without GuardDuty" attack path; one without the AWS Backup actions was told it had no backup plan. These checks now report NO DATA, with a note that says why, and stay out of the score.
+- A region-wide security check passes only when every scanned region was read. One unread region used to be skipped, so the check passed "in every scanned region" on the strength of the others.
+- An S3 bucket whose Block Public Access or encryption settings can't be read (a bucket policy, a missing `s3:Get*` permission) is no longer listed as public or unencrypted. The evidence names it under `BucketsNotRead`, and the two bucket checks report NO DATA when unread buckets are all that stands between them and a pass.
+- Macie's "not enabled" answer (an `AccessDeniedException` with that message) still reads as off. Any other denial from Macie is now treated as a denial.
+- The security report's priority list is called "the ten most important fixes" only when it holds ten.
+
+### Added
+- Every denied call is recorded on the `AwsContext` (`ctx.denied`) and saved in the evidence as `AccessDenied`: collector, operation, region, error code, and the resource for per-bucket denials.
+- An **Access Gaps** section in the security, DR, Well-Architected, discovery, cost, and network traffic reports lists the denied calls, so an empty table can be told apart from one the scan couldn't fill. The security report's executive summary says how many checks dropped out because of them.
+- The security report's Detection Coverage table shows "unknown" for a service whose status call was denied, and the detection-coverage KPI leaves it out. The DR report shows "n/a" for backup KPIs it couldn't read and marks its backup counts as a lower bound.
+- `shared/analysis/access.py`, and 68 tests in `tests/test_access_denied.py` covering the path from the denied call to the report.
+
 ## [1.6.0] - 2026-11-07
 
 ### Removed

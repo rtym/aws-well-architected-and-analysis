@@ -17,6 +17,7 @@ from pathlib import Path
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PLUGIN_ROOT))
 
+from shared.analysis import access  # noqa: E402
 from shared.analysis import checks as engine  # noqa: E402
 from shared.analysis import dr_checks  # noqa: E402
 from shared.awslib.cli import base_parser, formats_tuple, make_context, resolve_regions  # noqa: E402
@@ -59,6 +60,9 @@ def collect(ctx, regions: list[str]) -> dict:
         global_data_stores["S3Buckets"],
         health_checks,
     )
+    # Calls the scan was denied: a count of zero behind one of these is
+    # unread, not empty, and the checks score it as NO DATA.
+    data[access.KEY] = access.denied_calls(ctx)
     return data
 
 
@@ -99,8 +103,14 @@ def _add_headline(report: Report, data: dict, results: list) -> None:
     rds = summary["Rds"]
     instances = dr_checks.rds_instance_count(data)
     single_az = len(rds["SingleAzInstances"]) + len(rds.get("SingleAzClusters", []))
-    report.add_kpi("Backup plans", b["PlanCount"], f"{b['PlansWithCrossRegionCopy']} with cross-region copy", "good" if b["PlanCount"] else "bad")
-    report.add_kpi("Protected resources", b["ProtectedResourceCount"], "with AWS Backup recovery points", "good" if b["ProtectedResourceCount"] else "bad")
+    if not b["PlanCount"] and access.was_denied(data, "list_backup_plans"):
+        report.add_kpi("Backup plans", "n/a", "access denied")
+    else:
+        report.add_kpi("Backup plans", b["PlanCount"], f"{b['PlansWithCrossRegionCopy']} with cross-region copy", "good" if b["PlanCount"] else "bad")
+    if not b["ProtectedResourceCount"] and access.was_denied(data, "list_protected_resources"):
+        report.add_kpi("Protected resources", "n/a", "access denied")
+    else:
+        report.add_kpi("Protected resources", b["ProtectedResourceCount"], "with AWS Backup recovery points", "good" if b["ProtectedResourceCount"] else "bad")
     report.add_kpi("Failed backup jobs", b["RecentFailedJobs"], "recent", "warn" if b["RecentFailedJobs"] else "good")
     report.add_kpi(
         "Single-AZ databases",
@@ -142,6 +152,9 @@ def _checks_body(results: list) -> str:
             for n, r in enumerate(failed, start=1)
         ]
         body += "\n\n**What to fix, in order:**\n\n" + findings_table(fixes, ["#", "Severity", "Action", "Effort"])
+    notes = [f"- {r.check.title}: {r.note}" for r in ordered if r.note]
+    if notes:
+        body += "\n\n" + "\n".join(notes)
     return body
 
 
@@ -163,12 +176,15 @@ def build_report(data: dict) -> Report:
     results = dr_checks.evaluate_checks(data)
     _add_headline(report, data, results)
     report.add_section("Readiness Checks", _checks_body(results))
+    access.add_section(report, data)
 
     summary = data["Summary"]
     b = summary["Backup"]
+    backup_unread = access.was_denied(data, "list_backup_plans", "list_backup_vaults", "list_protected_resources", "list_recent_jobs")
     report.add_section(
         "Backup Coverage Summary",
-        "\n".join(
+        ("_AWS Backup couldn't be read in full (see Access Gaps), so these counts are a lower bound._\n\n" if backup_unread else "")
+        + "\n".join(
             [
                 f"- **Backup plans:** {b['PlanCount']}",
                 f"- **Backup vaults:** {b['VaultCount']}",

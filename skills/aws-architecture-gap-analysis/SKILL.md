@@ -53,6 +53,9 @@ rather than re-asserting facts from memory.
      instead of re-deriving them from the raw evidence, and treat an
      attack path as an architectural gap in its own right (it is the
      cross-cutting kind this skill exists to find).
+     Every evidence file also carries an `AccessDenied` list of the calls
+     its scan was denied. A check behind one of them is NO DATA: report it
+     as unverified, never as a gap or as clean.
    - `aws-cost-optimization`'s report -- optional, only if the user wants
      cost folded into the same prioritization.
 

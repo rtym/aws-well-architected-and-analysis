@@ -18,6 +18,7 @@ from pathlib import Path
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PLUGIN_ROOT))
 
+from shared.analysis import access  # noqa: E402
 from shared.awslib.cli import base_parser, formats_tuple, make_context  # noqa: E402
 from shared.awslib.collectors import network_traffic as nt  # noqa: E402
 from shared.awslib.collectors.security import guardduty_severity_label  # noqa: E402
@@ -36,11 +37,14 @@ def collect(ctx, region: str, log_group: str, lookback_hours: int) -> dict:
     end = datetime.datetime.now(datetime.timezone.utc)
     start = end - datetime.timedelta(hours=lookback_hours)
     start_epoch, end_epoch = int(start.timestamp()), int(end.timestamp())
-    return {
+    data = {
         "Window": {"Start": start.isoformat(), "End": end.isoformat()},
         "FlowLogAnalysis": nt.analyze_flow_logs(ctx, region, log_group, start_epoch, end_epoch),
         "NetworkFindings": nt.network_findings(ctx, region),
     }
+    # Calls the run was denied; the report lists them under Access Gaps.
+    data[access.KEY] = access.denied_calls(ctx)
+    return data
 
 
 def _add_kpis(report: Report, data: dict) -> None:
@@ -145,6 +149,7 @@ def build_report(data: dict, region: str, log_group: str) -> Report:
     else:
         report.add_section("GuardDuty Network-Related Findings", "No active Recon/UnauthorizedAccess/Trojan/Backdoor findings.")
 
+    access.add_section(report, data)
     return report
 
 

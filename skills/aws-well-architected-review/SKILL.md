@@ -92,7 +92,9 @@ the next step. The Security section also runs the security review's
 deterministic checks against the pack, ordered by the SEC question each
 informs (Security Baseline Checks). A FAIL there is evidence against that
 question, not its rating; NO DATA marks evidence the pack doesn't collect,
-which `aws-security-review` fills in.
+which `aws-security-review` fills in, or a call the run was denied. Denied
+calls are listed under Access Gaps; rate a question that depends on one as
+unknown, not as a gap.
 
 ### Step 2 -- Score each question
 
