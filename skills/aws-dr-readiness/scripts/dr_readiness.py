@@ -20,7 +20,7 @@ sys.path.insert(0, str(PLUGIN_ROOT))
 from shared.analysis import access  # noqa: E402
 from shared.analysis import checks as engine  # noqa: E402
 from shared.analysis import dr_checks  # noqa: E402
-from shared.awslib.cli import base_parser, formats_tuple, make_context, resolve_regions  # noqa: E402
+from shared.awslib.cli import base_parser, formats_tuple, make_context, resolve_regions, run  # noqa: E402
 from shared.awslib.collectors import backup, data_stores, dr  # noqa: E402
 from shared.reporting import charts, jsonutil  # noqa: E402
 from shared.reporting.report import Report, ScoreArea, Scorecard, findings_table, tone_for_score  # noqa: E402
@@ -286,4 +286,4 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run(main))

@@ -18,8 +18,10 @@ from pathlib import Path
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PLUGIN_ROOT))
 
+from botocore.exceptions import ClientError  # noqa: E402
+
 from shared.analysis import access  # noqa: E402
-from shared.awslib.cli import base_parser, formats_tuple, make_context  # noqa: E402
+from shared.awslib.cli import base_parser, formats_tuple, make_context, run  # noqa: E402
 from shared.awslib.collectors import network_traffic as nt  # noqa: E402
 from shared.awslib.collectors.security import guardduty_severity_label  # noqa: E402
 from shared.reporting import charts, jsonutil  # noqa: E402
@@ -85,6 +87,19 @@ def build_report(data: dict, region: str, log_group: str) -> Report:
 
     flow = data["FlowLogAnalysis"]
     _add_kpis(report, data)
+
+    incomplete = flow.get("incomplete_queries") or []
+    if incomplete:
+        report.add_section(
+            "Incomplete Queries",
+            "These flow-log queries did not finish, so the sections they feed show partial "
+            "results or none. An empty section below is not evidence of no traffic. Run the "
+            "scan again with a shorter `--lookback-hours`.\n\n"
+            + findings_table(
+                [{"Query": q.get("Query", "?").replace("_", " "), "Final status": q.get("Status", "?")} for q in incomplete],
+                ["Query", "Final status"],
+            ),
+        )
 
     top_talkers = flow.get("top_talkers_by_bytes", [])
     if top_talkers:
@@ -158,7 +173,18 @@ def main(argv=None) -> int:
     ctx = make_context(args)
     region = args.region or ctx.session.region_name or "us-east-1"
 
-    data = collect(ctx, region, args.log_group, args.lookback_hours)
+    try:
+        data = collect(ctx, region, args.log_group, args.lookback_hours)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") != "ResourceNotFoundException":
+            raise
+        print(
+            f"Stopped: log group {args.log_group!r} was not found in {region}.\n"
+            "  Check --log-group and --region. The flow log must deliver to CloudWatch Logs;\n"
+            "  see references/flow-logs-setup.md in this skill.",
+            file=sys.stderr,
+        )
+        return 2
 
     if args.json_out:
         jsonutil.write(data, args.json_out)
@@ -172,4 +198,4 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run(main))

@@ -101,6 +101,11 @@ parametrizes over all of them -- add yours there too. (Security Hub's
 `InvalidAccessException`, raised when the account isn't subscribed, was
 missing and crashed the whole security scan.)
 
+**A call the scan can't work without** stays unwrapped and raises. Every
+script enters through `shared.awslib.cli.run(main)`, which turns that
+denial, and credentials that didn't resolve, into one clear line and exit
+code 2 instead of a traceback.
+
 **Pagination:** use `paginate()` for operations botocore has a paginator
 for, and `manual_paginate()` for those it doesn't (several
 `wellarchitected` APIs). Check with

@@ -20,7 +20,8 @@ from pathlib import Path
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PLUGIN_ROOT))
 
-from shared.awslib.cli import base_parser, formats_tuple, make_context  # noqa: E402
+from shared.analysis import access  # noqa: E402
+from shared.awslib.cli import base_parser, formats_tuple, make_context, run  # noqa: E402
 from shared.awslib.collectors import organizations  # noqa: E402
 from shared.reporting import charts, jsonutil  # noqa: E402
 from shared.reporting.report import Report, findings_table  # noqa: E402
@@ -32,7 +33,10 @@ def parse_args(argv=None) -> argparse.Namespace:
 
 
 def collect(ctx, home_region: str) -> dict:
-    return organizations.collect_organization_posture(ctx, home_region)
+    posture = organizations.collect_organization_posture(ctx, home_region)
+    # Calls the run was denied; the report lists them under Access Gaps.
+    posture[access.KEY] = access.denied_calls(ctx)
+    return posture
 
 
 def _add_kpis(report: Report, posture: dict) -> None:
@@ -87,6 +91,7 @@ def build_report(posture: dict) -> Report:
             "or a delegated administrator -- re-run with credentials for "
             "one of those if a multi-account posture review was intended.",
         )
+        access.add_section(report, posture)
         return report
 
     org = posture.get("Organization") or {}
@@ -180,6 +185,7 @@ def build_report(posture: dict) -> Report:
         ),
     )
 
+    access.add_section(report, posture)
     return report
 
 
@@ -202,4 +208,4 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run(main))

@@ -57,10 +57,22 @@ QUERIES = {
 PORT_SCAN_DISTINCT_PORT_THRESHOLD = 15
 
 
-@ignore_access_denied(default=list)
 def run_insights_query(
     ctx: AwsContext, region: str, log_group: str, query: str, start_time: int, end_time: int, timeout_s: int = 60
 ) -> list[dict]:
+    """The rows of one Logs Insights query; see `query_with_status` for
+    whether the query finished."""
+    return query_with_status(ctx, region, log_group, query, start_time, end_time, timeout_s)[0]
+
+
+@ignore_access_denied(default=lambda: ([], "Denied"))
+def query_with_status(
+    ctx: AwsContext, region: str, log_group: str, query: str, start_time: int, end_time: int, timeout_s: int = 60
+) -> tuple[list[dict], str]:
+    """(rows, final status). The status matters: a query still Running
+    when the local timeout ends, or one that Failed or timed out on the
+    service side, returns few or no rows, which reads as "no such traffic"
+    unless the report can say the query never finished."""
     logs = ctx.client("logs", region=region)
     query_id = logs.start_query(
         logGroupName=log_group, startTime=start_time, endTime=end_time, queryString=query
@@ -77,23 +89,28 @@ def run_insights_query(
     rows = []
     for result in resp.get("results", []):
         rows.append({field["field"]: field["value"] for field in result})
-    return rows
+    return rows, resp["status"]
 
 
 def analyze_flow_logs(
     ctx: AwsContext, region: str, log_group: str, start_time: int, end_time: int
 ) -> dict:
     """Run every canned query and layer a port-scan heuristic on top."""
-    results = {
-        name: run_insights_query(ctx, region, log_group, query, start_time, end_time)
-        for name, query in QUERIES.items()
-    }
+    results = {}
+    incomplete = []
+    for name, query in QUERIES.items():
+        rows, status = query_with_status(ctx, region, log_group, query, start_time, end_time)
+        results[name] = rows
+        # A denied query is listed under Access Gaps instead.
+        if status not in ("Complete", "Denied"):
+            incomplete.append({"Query": name, "Status": status})
     scan_candidates = [
         row
         for row in results.get("distinct_dst_ports_per_src", [])
         if _as_int(row.get("distinctPorts")) >= PORT_SCAN_DISTINCT_PORT_THRESHOLD
     ]
     results["port_scan_candidates"] = scan_candidates
+    results["incomplete_queries"] = incomplete
     return results
 
 

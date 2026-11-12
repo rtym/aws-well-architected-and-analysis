@@ -40,7 +40,12 @@ def is_organizations_member(ctx: AwsContext) -> bool:
         org.describe_organization()
         return True
     except ClientError as exc:
-        if exc.response.get("Error", {}).get("Code") in NOT_IN_ORG_ERROR_CODES:
+        code = exc.response.get("Error", {}).get("Code")
+        if code in NOT_IN_ORG_ERROR_CODES:
+            if code == "AccessDeniedException":
+                # Recorded so the report can say which of the two cases
+                # this was: a denied call, not a standalone account.
+                ctx.record_denied("is_organizations_member", None, code, exc.operation_name)
             return False
         raise
 
