@@ -13,7 +13,9 @@ scores as NO DATA instead of as a false PASS.
 """
 from __future__ import annotations
 
+from . import access
 from .checks import (
+    NO_DATA,
     AttackPath,
     Affected,
     Check,
@@ -47,6 +49,74 @@ ROOT_MFA_RISK = "root account has no MFA"
 BPA_SETTINGS = ("BlockPublicAcls", "IgnorePublicAcls", "BlockPublicPolicy", "RestrictPublicBuckets")
 
 
+# Where each collector's evidence sits in a region of the bundle. When a
+# call was denied (`AccessDenied` in the evidence), these keys are removed
+# before the checks run: the collector returned its empty default, which
+# would otherwise score as "nothing found" (a PASS) or "service off" (a FAIL).
+DENIED_REGION_EVIDENCE = {
+    "guardduty_detector_ids": (("Security", "GuardDuty"), ("Security", "GuardDutyFindings")),
+    "guardduty_findings": (("Security", "GuardDutyFindings"),),
+    "securityhub_status": (("Security", "SecurityHub"),),
+    "securityhub_findings": (("Security", "SecurityHubFindings"),),
+    "inspector2_status": (("Security", "Inspector2"),),
+    "macie_status": (("Security", "Macie"),),
+    "access_analyzer_findings": (("Security", "AccessAnalyzerFindings"),),
+    "config_recorder_status": (("Security", "ConfigRecorder"),),
+    "unencrypted_ebs_volumes": (("Security", "UnencryptedEbsVolumes"),),
+    "public_ebs_snapshots": (("Security", "PublicEbsSnapshots"),),
+    "kms_keys_without_rotation": (("Security", "KmsKeysWithoutRotation"),),
+    "lambda_urls_without_auth": (("Security", "LambdaUrlsWithoutAuth"),),
+    "describe_rds_instances": (("RdsExposure",),),
+    "describe_rds_snapshots": (("PublicRdsSnapshots",),),
+    "public_rds_snapshots": (("PublicRdsSnapshots",),),
+    "public_rds_cluster_snapshots": (("PublicRdsSnapshots",),),
+    "describe_acm_certificates": (("Compute", "ExpiringCertificates"),),
+}
+# The same for account-wide evidence, under `Global`.
+DENIED_GLOBAL_EVIDENCE = {
+    "describe_trails": (("CloudTrail",),),
+    "account_public_access_block": (("AccountPublicAccessBlock",),),
+}
+DENIED_NOTE = "Not evaluated: the scan was denied access to evidence this check needs (see Access Gaps)."
+PARTIAL_NOTE = "Evaluated only where the evidence could be read; part of it was denied (see Access Gaps)."
+
+# A region where a check doesn't apply, as opposed to one whose evidence is
+# missing: it neither fails the check nor stops the other regions passing it.
+_NOT_APPLICABLE = object()
+
+
+def _without(node: dict, path: tuple[str, ...]) -> dict:
+    """A copy of `node` with the key at `path` removed; only the dicts along
+    the path are copied."""
+    if not isinstance(node, dict) or path[0] not in node:
+        return node
+    out = dict(node)
+    if len(path) == 1:
+        del out[path[0]]
+    else:
+        out[path[0]] = _without(node[path[0]], path[1:])
+    return out
+
+
+def readable_evidence(data: dict) -> dict:
+    """The evidence with everything a denied call would have filled taken
+    out, so a check reads it as missing. Returns `data` itself when nothing
+    was denied."""
+    denied = access.denied(data)
+    if not denied:
+        return data
+    regions = dict(_regions(data))
+    global_data = _global(data)
+    for entry in denied:
+        collector, region = entry.get("Collector"), entry.get("Region")
+        for path in DENIED_REGION_EVIDENCE.get(collector, ()):
+            if region in regions:
+                regions[region] = _without(regions[region], path)
+        for path in DENIED_GLOBAL_EVIDENCE.get(collector, ()):
+            global_data = _without(global_data, path)
+    return {**data, "Regions": regions, "Global": global_data}
+
+
 # ------------------------------------------------------------ evidence access
 def _regions(data: dict) -> dict:
     return data.get("Regions") or {}
@@ -57,21 +127,29 @@ def _global(data: dict) -> dict:
 
 
 def _per_region(data: dict, getter) -> list[Affected] | None:
-    """Collect affected resources region by region. `getter(region_data)`
-    returns a list of Affected, or None for "no evidence in this region".
-    None overall only when no region had evidence."""
+    """Collect affected resources region by region. `getter(region,
+    region_data)` returns a list of Affected, None for "no evidence in this
+    region", or `_NOT_APPLICABLE`. Anything affected is a FAIL wherever it
+    was found. A PASS needs evidence from every region the check applies
+    to: one unread region makes the result None (NO DATA), because "in
+    every scanned region" can't be claimed past a region nobody read."""
     regions = _regions(data)
     if not regions:
         return None
     affected: list[Affected] = []
-    saw_evidence = False
+    saw_evidence = missing = False
     for region, region_data in regions.items():
         found = getter(region, region_data)
+        if found is _NOT_APPLICABLE:
+            continue
         if found is None:
+            missing = True
             continue
         saw_evidence = True
         affected.extend(found)
-    return affected if saw_evidence else None
+    if affected:
+        return affected
+    return [] if saw_evidence and not missing else None
 
 
 def _security(region_data: dict) -> dict:
@@ -275,7 +353,7 @@ def _analyzer_findings(data):
         if "AccessAnalyzerFindings" not in sec:
             return None
         if sec.get("AccessAnalyzers") == []:
-            return None  # no analyzer: zero findings proves nothing
+            return _NOT_APPLICABLE  # no analyzer: zero findings proves nothing
         return [
             Affected(
                 str(f.get("resource") or f.get("id") or "?"),
@@ -354,18 +432,27 @@ def _data_stores(data) -> dict | None:
     return _global(data).get("DataStores")
 
 
+def _buckets_not_read(data, setting: str) -> list[str]:
+    """Buckets whose `setting` the scan was denied (a bucket policy, or a
+    missing s3:Get* permission)."""
+    ds = _data_stores(data) or {}
+    return [str(b.get("Name")) for b in ds.get("BucketsNotRead") or [] if setting in (b.get("Settings") or [])]
+
+
 def _public_buckets(data):
     ds = _data_stores(data)
     if ds is None or "PubliclyAccessibleBuckets" not in ds:
         return None
-    return [Affected(str(b.get("Name")), "global", "public access not fully blocked") for b in ds["PubliclyAccessibleBuckets"]]
+    affected = [Affected(str(b.get("Name")), "global", "public access not fully blocked") for b in ds["PubliclyAccessibleBuckets"]]
+    return affected or (None if _buckets_not_read(data, "PublicAccessBlock") else [])
 
 
 def _unencrypted_buckets(data):
     ds = _data_stores(data)
     if ds is None or "UnencryptedBuckets" not in ds:
         return None
-    return [Affected(str(b.get("Name")), "global", "no default encryption") for b in ds["UnencryptedBuckets"]]
+    affected = [Affected(str(b.get("Name")), "global", "no default encryption") for b in ds["UnencryptedBuckets"]]
+    return affected or (None if _buckets_not_read(data, "Encryption") else [])
 
 
 def _public_ebs_snapshots(data):
@@ -534,12 +621,30 @@ CATALOG: list[tuple[Check, object]] = [
 CHECKS_BY_ID = {check.id: check for check, _ in CATALOG}
 
 
+_BUCKET_CHECKS = {"s3-bucket-public": "PublicAccessBlock", "s3-default-encryption": "Encryption"}
+
+
 def evaluate_checks(data: dict) -> list[CheckResult]:
-    results = evaluate(CATALOG, data)
+    """Every check, against the evidence the scan could read. A check whose
+    evidence was denied is NO DATA with a note saying so; one that fails on
+    the part that was read stays a FAIL, with a note that it is partial."""
+    readable = readable_evidence(data)
+    results = evaluate(CATALOG, readable)
+    if readable is not data:
+        for r, unscrubbed in zip(results, evaluate(CATALOG, data), strict=True):
+            if r.status == NO_DATA and unscrubbed.status != NO_DATA:
+                r.note = DENIED_NOTE
+            elif r.failed and len(r.affected) < len(unscrubbed.affected):
+                r.note = PARTIAL_NOTE
+    for r in results:
+        unread = _buckets_not_read(data, _BUCKET_CHECKS.get(r.check.id, ""))
+        if unread:
+            r.note = (DENIED_NOTE if r.status == NO_DATA else PARTIAL_NOTE) + f" Buckets not read: {len(unread)}."
+    data = readable
     if account_bpa_fully_on(data):
         for r in results:
             if r.check.id == "s3-bucket-public" and r.failed:
-                r.note = (
+                r.note = (r.note + " " if r.note else "") + (
                     "Account-level Block Public Access is fully on, which overrides these bucket "
                     "settings: the buckets can't be made public until it is turned off."
                 )
@@ -742,6 +847,7 @@ ATTACK_PATHS = (
 
 
 def attack_paths(data: dict) -> list[AttackPath]:
+    data = readable_evidence(data)
     paths = []
     for path_id, title, severity, why, fix, builds_on, effort, finder in ATTACK_PATHS:
         affected = finder(data)
@@ -754,6 +860,7 @@ def attack_paths(data: dict) -> list[AttackPath]:
 def threats(data: dict, guardduty_label) -> list[Threat]:
     """GuardDuty high/critical findings grouped by finding type, plus the
     open Security Hub critical/high findings as one triage item."""
+    data = readable_evidence(data)
     by_type: dict[str, list[dict]] = {}
     for f in _active_threat_findings(data):
         by_type.setdefault(f.get("Type", "?"), []).append(f)
@@ -805,7 +912,7 @@ def detection_coverage(data: dict) -> tuple[int, int]:
     """(services on, services checked) across GuardDuty, Security Hub,
     Inspector, Macie, and the Config recorder in every scanned region."""
     on = total = 0
-    for region_data in _regions(data).values():
+    for region_data in _regions(readable_evidence(data)).values():
         sec = _security(region_data)
         for key in ("GuardDuty", "SecurityHub", "Inspector2", "Macie"):
             if sec.get(key) is not None:

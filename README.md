@@ -53,6 +53,7 @@ drawn from general knowledge of AWS's public docs.
 │   │                               #   well_architected
 │   ├── analysis/
 │   │   ├── checks.py              # scoring engine: PASS/FAIL/NO DATA, Security Hub-method score, priority ranking
+│   │   ├── access.py              # denied API calls: saved as `AccessDenied` evidence, listed in each report's Access Gaps section
 │   │   ├── security_checks.py     # 31 security checks, attack-path correlations, threat triage
 │   │   └── dr_checks.py           # DR readiness checks
 │   └── reporting/
@@ -186,7 +187,7 @@ The suite covers four layers:
 |---|---|---|
 | Collectors | `test_collectors_*.py` | Each AWS call's request shape, response parsing, and graceful degradation when a service is disabled or a permission is missing |
 | Reporting | `test_reporting.py`, `test_jsonutil.py` | Chart rendering, the scorecard/KPI/contents layout, Markdown/HTML/PDF output with no WeasyPrint warnings, and the HTML-escaping contract (see `CONTRIBUTING.md`) |
-| Analysis | `test_analysis_*.py` | The scoring engine, every security and DR check against its own evidence (and NO DATA on missing evidence), the EC2.19/EC2.18 port logic, each attack path, and threat triage |
+| Analysis | `test_analysis_*.py` | The scoring engine, every security and DR check against its own evidence (and NO DATA on missing evidence), the EC2.19/EC2.18 port logic, each attack path, and threat triage; `test_access_denied.py` pins that a denied call scores as NO DATA, never as a pass or a fail |
 | Report assembly | `test_skill_scripts.py` | Each skill's `build_report()` against synthetic evidence |
 | Prose quality | `test_prose_quality.py` | Every rendered report and the plugin's own docs pass the prose lint (no filler vocabulary, no unfilled placeholders, orientation paragraph present, severity legends list only used levels) |
 | IAM policy coverage | `test_permissions.py` | Every AWS API call the collectors make is granted by `PERMISSIONS.md`'s least-privilege policy, every action uses a real IAM prefix, and every explicit action names a real operation |

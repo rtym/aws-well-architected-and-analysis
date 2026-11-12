@@ -81,6 +81,21 @@ SubscriptionRequiredException, InvalidAction, InvalidAccessException,
 AWSOrganizationsNotInUseException
 ```
 
+A swallowed permission error (`AccessDenied`, `AccessDeniedException`,
+`UnauthorizedOperation`) is also recorded on the `AwsContext` in
+`ctx.denied`, because the default a collector returns looks exactly like
+"nothing found". Every script saves that list in its evidence as
+`AccessDenied` and lists it in the report's Access Gaps section. If the
+collector feeds a scored check, tell the checks where its evidence lands:
+add it to `DENIED_REGION_EVIDENCE` or `DENIED_GLOBAL_EVIDENCE` in
+`shared/analysis/security_checks.py`, or to `COLLECTORS` in
+`dr_checks.py`. Without that entry a denied call scores as a pass or a
+fail. A helper that takes a bare client instead of the context can't
+record anything; return a sentinel from it and record the denial in the
+caller, as `data_stores.list_buckets` does. If the service uses a
+permission error to say "not enabled" (Macie does), catch that case inside
+the collector so it isn't recorded as a gap.
+
 `test_ignore_access_denied_swallows_every_documented_error_code`
 parametrizes over all of them -- add yours there too. (Security Hub's
 `InvalidAccessException`, raised when the account isn't subscribed, was
@@ -154,6 +169,9 @@ pair to the skill's catalog (`security_checks.CATALOG`,
 - Add the check to the parametrized fail-on-its-own-evidence test in
   `tests/test_analysis_*_checks.py`, and a NO DATA case if its evidence
   can be absent.
+- If the evidence comes from a collector wrapped in
+  `@ignore_access_denied`, map that collector as section 3 describes and
+  add a row to `DENIED_CASES` in `tests/test_access_denied.py`.
 
 ## 5. Adding a skill
 

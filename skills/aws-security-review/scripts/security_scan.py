@@ -26,6 +26,7 @@ sys.path.insert(0, str(PLUGIN_ROOT))
 
 from botocore.exceptions import BotoCoreError, ClientError  # noqa: E402
 
+from shared.analysis import access  # noqa: E402
 from shared.analysis import checks as engine  # noqa: E402
 from shared.analysis import security_checks  # noqa: E402
 from shared.awslib.cli import base_parser, formats_tuple, make_context, resolve_regions  # noqa: E402
@@ -74,6 +75,9 @@ def collect(ctx, regions: list[str]) -> dict:
     data["Global"]["AccountPublicAccessBlock"] = security.account_public_access_block(ctx)
     # CloudTrail trails are visible account-wide from one region call.
     data["Global"]["CloudTrail"] = cloudtrail.cloudtrail_posture(ctx, regions[0])
+    # Calls the scan was denied. The checks read the evidence behind them
+    # as missing, and the report lists them under Access Gaps.
+    data[access.KEY] = access.denied_calls(ctx)
     return data
 
 
@@ -200,6 +204,14 @@ def _executive_summary(data: dict, analysis: dict) -> str:
         lines.append(f"- **{critical} critical and {high} high-severity checks failed.** The priority list below orders the fixes.")
     elif overall.score is not None:
         lines.append("- **No critical or high-severity check failed.**")
+    denied = access.denied(data)
+    if denied:
+        unread = sum(1 for r in results if r.status == engine.NO_DATA and r.note.startswith(security_checks.DENIED_NOTE))
+        lines.append(
+            f"- **The scan was denied {_plural(len(denied), 'call')}.** "
+            + (f"{_plural(unread, 'check')} could not be evaluated and {'is' if unread == 1 else 'are'} left out of the score. " if unread else "")
+            + "Access Gaps lists what to grant before the next run."
+        )
     paths = analysis["paths"]
     if paths:
         worst = paths[0]
@@ -247,7 +259,7 @@ def _priority_actions(actions: list[engine.Action]) -> str:
         for a in actions
     ]
     return (
-        "The ten most important fixes, most severe first, each with what was found under it. At "
+        f"The {'ten most important fixes' if len(actions) >= 10 else 'fixes'}, most severe first, each with what was found under it. At "
         "equal severity an attack path comes before an active threat, and both before a single "
         "failed check; exposed resources come before gaps in visibility. Effort is a rough guide: "
         "Low is a setting change, High means migrating data or resources.\n\n"
@@ -341,7 +353,8 @@ def build_report(data: dict, analysis: dict | None = None) -> Report:
     check_intro = (
         "Every check, failures first. **Control** is the Security Hub control the check implements; "
         "\"(related)\" marks a check that tests the same risk more narrowly. NO DATA means the scan "
-        "couldn't read the evidence or found nothing to evaluate.\n\n"
+        "couldn't read the evidence (a denied call, listed under Access Gaps) or found nothing to "
+        "evaluate; it counts neither for nor against the score.\n\n"
     )
     if any(counts.values()):
         chart = charts.severity_chart(counts, title="Failed checks by severity")
@@ -350,6 +363,7 @@ def build_report(data: dict, analysis: dict | None = None) -> Report:
     for domain, body in _check_tables(analysis):
         report.add_section(domain, body, level=3)
 
+    access.add_section(report, data)
     _coverage_section(report, data)
     _threat_sections(report, data)
     _evidence_sections(report, data)
@@ -358,25 +372,33 @@ def build_report(data: dict, analysis: dict | None = None) -> Report:
 
 
 def _coverage_section(report: Report, data: dict) -> None:
+    def state(status: dict | None, flag: str = "Enabled", on: str = "enabled", off: str = "NOT enabled") -> str:
+        if status is None:
+            return "unknown"
+        return on if status.get(flag) else off
+
     rows = []
-    for region, region_data in data["Regions"].items():
+    # Read through `readable_evidence`, which drops a service whose status
+    # call was denied: that service is "unknown" here, not "NOT enabled".
+    for region, region_data in security_checks.readable_evidence(data)["Regions"].items():
         sec = region_data["Security"]
         analyzers = sec.get("AccessAnalyzers")
         rows.append(
             {
                 "Region": region,
-                "GuardDuty": "enabled" if sec["GuardDuty"]["Enabled"] else "NOT enabled",
-                "Security Hub": "enabled" if sec.get("SecurityHub", {}).get("Enabled") else "NOT enabled",
-                "Inspector": "enabled" if sec.get("Inspector2", {}).get("Enabled") else "NOT enabled",
-                "Macie": "enabled" if sec.get("Macie", {}).get("Enabled") else "NOT enabled",
-                "Config recorder": "recording" if sec.get("ConfigRecorder", {}).get("Recording") else "NOT recording",
+                "GuardDuty": state(sec.get("GuardDuty")),
+                "Security Hub": state(sec.get("SecurityHub")),
+                "Inspector": state(sec.get("Inspector2")),
+                "Macie": state(sec.get("Macie")),
+                "Config recorder": state(sec.get("ConfigRecorder"), "Recording", "recording", "NOT recording"),
                 "Access Analyzer": "unknown" if analyzers is None else ("enabled" if analyzers else "NOT enabled"),
             }
         )
     report.add_section(
         "Detection Coverage",
         "Which detection services are on in each scanned region. A service that is off can't "
-        "report anything, so a quiet region with gaps here is unmonitored, not clean.\n\n"
+        "report anything, so a quiet region with gaps here is unmonitored, not clean. \"unknown\" "
+        "means the scan wasn't allowed to read the service's status.\n\n"
         + findings_table(rows, ["Region", "GuardDuty", "Security Hub", "Inspector", "Macie", "Config recorder", "Access Analyzer"]),
     )
 

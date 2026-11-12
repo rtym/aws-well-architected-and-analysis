@@ -363,10 +363,17 @@ def inspector2_status(ctx: AwsContext, region: str) -> dict:
 @ignore_access_denied(default=lambda: {"Enabled": False, "Status": None})
 def macie_status(ctx: AwsContext, region: str) -> dict:
     """Whether Amazon Macie (S3 sensitive-data discovery) is on in a region.
-    When Macie has never been enabled the API raises AccessDeniedException,
-    which the decorator maps to Enabled: False -- the correct answer."""
+    When Macie has never been enabled the API raises AccessDeniedException
+    with the message "Macie is not enabled", which is an answer (off), not
+    a permissions gap; any other AccessDeniedException is recorded as one."""
     macie = ctx.client("macie2", region=region)
-    session_info = macie.get_macie_session()
+    try:
+        session_info = macie.get_macie_session()
+    except ClientError as exc:
+        error = exc.response.get("Error", {})
+        if error.get("Code") == "AccessDeniedException" and "not enabled" in (error.get("Message") or "").lower():
+            return {"Enabled": False, "Status": None}
+        raise
     return {"Enabled": session_info.get("status") == "ENABLED", "Status": session_info.get("status")}
 
 

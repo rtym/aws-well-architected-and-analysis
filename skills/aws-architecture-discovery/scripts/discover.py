@@ -19,6 +19,7 @@ sys.path.insert(0, str(PLUGIN_ROOT))
 
 from botocore.exceptions import BotoCoreError, ClientError  # noqa: E402
 
+from shared.analysis import access  # noqa: E402
 from shared.awslib.cli import base_parser, formats_tuple, make_context, resolve_regions  # noqa: E402
 from shared.awslib.collectors import compute, containers, data_stores, vpc  # noqa: E402
 from shared.reporting import charts, jsonutil  # noqa: E402
@@ -50,6 +51,8 @@ def collect(ctx, regions: list[str]) -> dict:
             "DataStores": data_stores.collect_region_data_stores(ctx, region),
         }
     inventory["Global"] = {"DataStores": data_stores.collect_global_data_stores(ctx)}
+    # Calls the run was denied; the report lists them under Access Gaps.
+    inventory[access.KEY] = access.denied_calls(ctx)
     return inventory
 
 
@@ -416,6 +419,8 @@ def build_report(inventory: dict, region_counts: dict[str, dict[str, int]]) -> R
         f"- **Unencrypted buckets:** {len(global_ds['UnencryptedBuckets'])}",
     ]
     report.add_section("Global Resources (S3)", "\n".join(global_body))
+
+    access.add_section(report, inventory)
     return report
 
 

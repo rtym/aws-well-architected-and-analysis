@@ -17,6 +17,7 @@ from pathlib import Path
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PLUGIN_ROOT))
 
+from shared.analysis import access  # noqa: E402
 from shared.awslib.cli import base_parser, formats_tuple, make_context  # noqa: E402
 from shared.awslib.collectors import compute, cost  # noqa: E402
 from shared.reporting import charts, jsonutil  # noqa: E402
@@ -60,6 +61,8 @@ def collect(ctx, start: str, end: str, co_regions: list[str]) -> dict:
         }
         for region in co_regions
     }
+    # Calls the run was denied; the report lists them under Access Gaps.
+    data[access.KEY] = access.denied_calls(ctx)
     return data
 
 
@@ -339,6 +342,7 @@ def build_report(data: dict, start: str, end: str) -> Report:
             "No AWS Budgets configured -- consider setting at least one cost budget with an alert threshold for proactive spend governance.",
         )
 
+    access.add_section(report, data)
     return report
 
 

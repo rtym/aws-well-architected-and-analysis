@@ -73,7 +73,9 @@ The report leads with the analysis, then keeps the raw evidence below it:
 - **Posture score** (0-100) with a breakdown by area (detection and
   logging, identity and access, network exposure, data protection). It is
   passed checks divided by checks with data, the same method Security Hub
-  uses for its security score; NO DATA checks are left out. Severity does
+  uses for its security score; NO DATA checks are left out. A check is
+  NO DATA when the scan was denied the call behind it: the report lists
+  those calls under Access Gaps and never scores them as a pass or a fail. Severity does
   not weight it, so always quote it together with the critical and high
   counts in the KPI tiles.
 - **Executive summary** and **priority actions**: the ten most important
@@ -168,5 +170,7 @@ pillar, and feeds `aws-architecture-gap-analysis`.
    checked independently of either detection service.
 5. The posture score is never quoted alone: pair it with the number of
    failed critical and high checks, and say how many checks had no data.
+   If the report has an Access Gaps section, say that the score covers
+   only what the credentials could read, and name the denied calls.
 6. Every attack path in the report is either confirmed against the
    evidence or explicitly marked as intended exposure by the user.
