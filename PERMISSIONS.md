@@ -11,7 +11,8 @@ clearly called out where they appear, are:
   It is never called automatically.
 - CloudWatch Logs Insights `StartQuery` -- this creates a query execution
   (a read operation against your data, billed like any Logs Insights query)
-  but does not modify infrastructure.
+  but does not modify infrastructure. `StopQuery` only stops a query this
+  plugin started and gave up waiting for, so it stops scanning and billing.
 
 **Grant the credentials you use with this plugin read-only access.** The
 credential chain is whatever `boto3`/the AWS CLI resolves normally (a named
@@ -61,6 +62,7 @@ customer-managed policy:
         "s3:GetReplicationConfiguration",
         "logs:StartQuery",
         "logs:GetQueryResults",
+        "logs:StopQuery",
         "logs:Describe*",
         "acm:ListCertificates",
         "acm:DescribeCertificate",
@@ -194,9 +196,11 @@ Notes on Option B:
   policy. If you want the WA review skill to be able to write evidence back
   into a real workload, add that action yourself as a separate, explicit
   decision -- do not add it by default.
-- Cost Explorer (`ce:*`) and Well-Architected Tool APIs are only callable
-  from `us-east-1` regardless of which region you're analyzing; the scripts
-  already pin those clients to `us-east-1` internally.
+- Cost Explorer (`ce:*`) is only callable from `us-east-1` regardless of
+  which region you're analyzing; the scripts already pin that client to
+  `us-east-1` internally. The Well-Architected Tool is regional: the
+  evidence script reads a `--workload-id` from the first scanned region, so
+  pass the workload's own region first.
 - IAM action prefixes are not always the boto3 client name: IAM Access
   Analyzer's prefix is `access-analyzer` (the client is `accessanalyzer`),
   and CloudWatch's is `cloudwatch`. `tests/test_permissions.py` checks

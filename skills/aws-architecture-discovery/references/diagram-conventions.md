@@ -63,8 +63,9 @@ Legend -- symbols on this diagram
   Public internet x1 -- any address outside this account
   Virtual Private Cloud (VPC) x2 -- isolated private network; label shows its address range
   Subnet x3 -- address range in one Availability Zone;
-               Public = route to the Internet Gateway, Private = out through a
-               NAT Gateway, Isolated = no default route
+               Public = route to the Internet Gateway, Private = default route
+               through a NAT, transit or VPN gateway or an appliance,
+               Isolated = no default route
   Gateway x3 -- Internet, NAT (Network Address Translation) or Transit Gateway;
                 where packets leave a subnet
   VPC endpoint x2 -- private link to an AWS service; traffic stays on the AWS network

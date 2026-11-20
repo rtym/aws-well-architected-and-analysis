@@ -39,27 +39,59 @@ def collect(ctx, home_region: str) -> dict:
     return posture
 
 
+# The collector behind each part of the report. A denied collector returns
+# the same empty value as "nothing there", so each part checks its own
+# collector before it says "no accounts", "no SCP", or "not configured".
+ACCOUNTS = "list_accounts"
+POLICIES = "list_service_control_policies"
+OU_MEMBERS = "ou_descendant_account_ids"
+DELEGATED = "list_delegated_administrators"
+ORG_ADMINS = {"GuardDutyOrganizationAdmin": "guardduty_organization_admin", "SecurityHubOrganizationAdmin": "securityhub_organization_admin"}
+NOT_READ = "unknown: the scan was denied the call (see Access Gaps)"
+
+
+def _denied(posture: dict, collector: str) -> bool:
+    return access.was_denied(posture, collector)
+
+
 def _add_kpis(report: Report, posture: dict) -> None:
     org = posture.get("Organization") or {}
     accounts = posture.get("Accounts", [])
     uncovered = posture.get("AccountsWithoutScpCoverage", [])
     members = [a for a in accounts if a.get("Id") != org.get("MasterAccountId")]
     active = sum(1 for a in accounts if a.get("Status", "ACTIVE") == "ACTIVE")
-    report.add_kpi("Accounts", len(accounts), f"{active} active", "neutral")
-    if members:
+    if _denied(posture, ACCOUNTS):
+        report.add_kpi("Accounts", "n/a", "access denied")
+    else:
+        report.add_kpi("Accounts", len(accounts), f"{active} active", "neutral")
+    if _denied(posture, POLICIES):
+        report.add_kpi("SCP coverage", "n/a", "access denied")
+    elif members:
         covered = len(members) - len(uncovered)
         pct = round(100 * covered / len(members))
+        partial = _denied(posture, OU_MEMBERS)
+        # With an OU's accounts unread, accounts under it count as
+        # uncovered, so the percentage is a lower bound.
         report.add_kpi(
             "SCP coverage",
             f"{pct}%",
-            f"{covered} of {len(members)} member accounts",
-            "good" if pct == 100 else "warn" if pct >= 75 else "bad",
+            f"{covered} of {len(members)} member accounts" + (", at least: some OUs unread" if partial else ""),
+            "good" if pct == 100 else "warn" if pct >= 75 or partial else "bad",
         )
     restrictive = organizations.restrictive_scps(posture.get("ServiceControlPolicies", []))
-    report.add_kpi("Restrictive SCPs", len(restrictive), "excluding FullAWSAccess", "good" if restrictive else "bad")
-    report.add_kpi("Delegated admins", len(posture.get("DelegatedAdministrators", [])), "registered accounts")
+    if _denied(posture, POLICIES):
+        report.add_kpi("Restrictive SCPs", "n/a", "access denied")
+    else:
+        report.add_kpi("Restrictive SCPs", len(restrictive), "excluding FullAWSAccess", "good" if restrictive else "bad")
+    if _denied(posture, DELEGATED):
+        report.add_kpi("Delegated admins", "n/a", "access denied")
+    else:
+        report.add_kpi("Delegated admins", len(posture.get("DelegatedAdministrators", [])), "registered accounts")
     for label, key in (("GuardDuty", "GuardDutyOrganizationAdmin"), ("Security Hub", "SecurityHubOrganizationAdmin")):
         managed = bool(posture.get(key))
+        if not managed and _denied(posture, ORG_ADMINS[key]):
+            report.add_kpi(f"{label} org-managed", "n/a", "access denied")
+            continue
         report.add_kpi(
             f"{label} org-managed",
             "yes" if managed else "no",
@@ -109,9 +141,10 @@ def build_report(posture: dict) -> Report:
                 # for it is "management account".
                 f"- **Management account:** {org.get('MasterAccountId', '?')}",
                 f"- **Feature set:** {org.get('FeatureSet', '?')}",
-                f"- **Member accounts:** {len(accounts)}",
-                f"- **Service Control Policies defined:** {len(policies)}",
-                f"- **Member accounts with no restrictive SCP in effect:** {len(uncovered)}",
+                f"- **Accounts:** {NOT_READ if _denied(posture, ACCOUNTS) else len(accounts)}",
+                f"- **Service Control Policies defined:** {NOT_READ if _denied(posture, POLICIES) else len(policies)}",
+                f"- **Member accounts with no restrictive SCP in effect:** "
+                f"{NOT_READ if _denied(posture, ACCOUNTS) or _denied(posture, POLICIES) else len(uncovered)}",
             ]
         ),
     )
@@ -132,12 +165,25 @@ def build_report(posture: dict) -> Report:
         "whether attached to the account itself, to an OU above it, or to the "
         "root. The management account is not listed: SCPs never apply to it."
     )
-    if uncovered:
+    if _denied(posture, ACCOUNTS) or _denied(posture, POLICIES):
+        report.add_section(
+            "Accounts With No Restrictive SCP in Effect",
+            "Not evaluated: the scan was denied the account or policy listing it needs "
+            "(see Access Gaps). Run it from the management account or a delegated "
+            f"administrator. {coverage_note}",
+        )
+    elif uncovered:
         rows = [{"Account ID": a.get("Id"), "Name": a.get("Name")} for a in uncovered]
+        ou_note = (
+            "\n\nThe scan was denied the account list of some OUs (see Access Gaps), so an "
+            "account below may be covered by an SCP attached to one of those OUs."
+            if _denied(posture, OU_MEMBERS)
+            else ""
+        )
         report.add_section(
             "Accounts With No Restrictive SCP in Effect",
             "These member accounts run with no guardrail beyond IAM: no SCP "
-            f"restricts what their principals can do. {coverage_note}\n\n"
+            f"restricts what their principals can do. {coverage_note}{ou_note}\n\n"
             + findings_table(rows, ["Account ID", "Name"]),
         )
     else:
@@ -170,17 +216,27 @@ def build_report(posture: dict) -> Report:
     if delegated:
         rows = [{"Account ID": d.get("Id"), "Name": d.get("Name"), "Email": d.get("Email")} for d in delegated]
         report.add_section("Delegated Administrator Accounts", findings_table(rows, ["Account ID", "Name", "Email"]))
+    elif _denied(posture, DELEGATED):
+        report.add_section("Delegated Administrator Accounts", f"Delegated administrators: {NOT_READ}.")
     else:
         report.add_section("Delegated Administrator Accounts", "No delegated administrator accounts registered for any AWS service.")
 
-    gd_admin = posture.get("GuardDutyOrganizationAdmin")
-    sh_admin = posture.get("SecurityHubOrganizationAdmin")
+    def admin_line(label: str, key: str, id_field: str) -> str:
+        admin = posture.get(key)
+        if admin:
+            value = admin.get(id_field)
+        elif _denied(posture, ORG_ADMINS[key]):
+            value = NOT_READ
+        else:
+            value = f"NOT configured -- each account manages {label} independently"
+        return f"- **{label} delegated administrator:** {value}"
+
     report.add_section(
         "Org-Wide Security Service Management",
         "\n".join(
             [
-                f"- **GuardDuty delegated administrator:** {gd_admin.get('AdminAccountId') if gd_admin else 'NOT configured -- each account manages GuardDuty independently'}",
-                f"- **Security Hub delegated administrator:** {sh_admin.get('AccountId') if sh_admin else 'NOT configured -- each account manages Security Hub independently'}",
+                admin_line("GuardDuty", "GuardDutyOrganizationAdmin", "AdminAccountId"),
+                admin_line("Security Hub", "SecurityHubOrganizationAdmin", "AccountId"),
             ]
         ),
     )
@@ -192,7 +248,7 @@ def build_report(posture: dict) -> Report:
 def main(argv=None) -> int:
     args = parse_args(argv)
     ctx = make_context(args)
-    home_region = args.region or "us-east-1"
+    home_region = ctx.home_region()
 
     posture = collect(ctx, home_region)
 

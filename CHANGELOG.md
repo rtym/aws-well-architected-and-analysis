@@ -2,6 +2,33 @@
 
 Notable changes to this plugin. Versions track `.claude-plugin/plugin.json`.
 
+## [1.8.0] - 2026-11-20
+
+### Fixed
+- `--json-out reports/output/...`, the command every skill documents, failed with `FileNotFoundError` on a first run: the scripts write the JSON before the report creates the output folder, so the scan finished and then crashed. The JSON writer now creates its folder.
+- Two Service Quotas codes were wrong. `L-DF5E4CA3` is "Network interfaces per Region" (default 5,000), and the evidence labeled its value "Rules per security group". `L-0263D0A3` is an EC2 quota (Elastic IP addresses), so asking for it under VPC returned nothing and the row disappeared. The list now checks VPC security groups per Region (`L-E79EC296`), inbound or outbound rules per security group (`L-0EA8095F`), and network interfaces per Region under their right names.
+- A denied `cloudtrail:GetTrailStatus` failed CloudTrail.1 ("no multi-region trail is logging") with nothing under Access Gaps. The denial is now recorded against the trail, the check is NO DATA unless another multi-region trail is known to be logging, and the reports say "unknown" instead of "NO -- gap".
+- The organizations report claimed what it couldn't read. From a member account, which may describe its organization but not list its accounts or policies, it said "Every member account has at least one restrictive SCP in effect", "No delegated administrator accounts registered", and "NOT configured" for GuardDuty and Security Hub. Those parts now say the call was denied, and their KPI tiles show "n/a". When an OU's accounts couldn't be listed, the coverage list says an account in it may be covered.
+- `--workload-id` crashed with `AttributeError` when the Well-Architected Tool calls were denied, and with a traceback for a workload that doesn't exist. A denied workload is now a line in the report. The workload is read before anything else, and a wrong ID or region stops the run with one line and exit code 2.
+- The security scan stopped at its last step with `NoRegionError` when neither `--region` nor the profile set a region: the S3 Control client had none. Calls that need a region outside the scanned ones now use `--region`, else the profile's region, else `us-east-1`.
+- The cost and organizations scripts fell back to `us-east-1` even when the profile named another region, so idle resources and Compute Optimizer were read from a region nobody chose. They now use the profile's region, like the other scripts.
+- The traffic report read denied or unfinished queries as quiet traffic ("No rejected flows in this window", tiles in green). Each section now says when its query was denied or ended early, and the tiles show "n/a". The same applies to denied GuardDuty calls.
+- The DR report said "No RDS instances found" when every database was Multi-AZ with no replicas. It now counts what it found, and says when RDS couldn't be read.
+- The DR check "a backup plan copies recovery points to another region" passed on any copy rule, including a copy to another vault in the same region. Only a destination in another region counts now.
+- The DR report counted buckets whose replication setting was denied as not replicating. They are now in neither count, and the report gives their number.
+- The DR check "standalone RDS instances run Multi-AZ" passed in an account with only Aurora clusters, where there is no standalone instance to judge. It is NO DATA there now. The "Single-AZ databases" tile counts standalone instances and clusters, the units the checks judge, and the "Failed backup jobs" tile shows "n/a" when the job list was denied.
+- The Well-Architected evidence pack stopped for all six pillars when Cost Explorer was denied, which is common in member accounts. It now loses only its Cost Explorer evidence, still reads Budgets, and lists the denial under Access Gaps. Its security lines say "unknown" instead of "GuardDuty enabled: False" when the call was denied.
+- The DR scan read the full data-store inventory (DynamoDB, ElastiCache, Lambda) and used none of it; a credential without those permissions stopped the scan. It reads RDS only.
+- Discovery drew a subnet whose default route goes through a VPN gateway or a NAT instance as "Isolated: no 0.0.0.0/0 route", and a blackhole route as a working one. Any live default route now makes a subnet Private, an IPv6 route to an Internet Gateway makes it Public, and the label names the target. Its S3 tile no longer says "all block public access" when some buckets couldn't be read.
+- A Logs Insights query still running when the scan stops waiting is now stopped, instead of scanning and billing in the background. This needs `logs:StopQuery`, added to `PERMISSIONS.md`.
+- An IAM credential report that isn't ready after a minute stops the scan with one line and exit code 2 instead of a traceback.
+- `PERMISSIONS.md` said the Well-Architected Tool APIs only work in `us-east-1`. The Tool is regional; the note now says to pass the workload's region first. The Cost Optimization pillar reference pointed at Compute Optimizer evidence the pack doesn't collect; it now points at `aws-cost-optimization`.
+
+### Added
+- `AwsContext.home_region()`, and `ScanStopped`: raise it with a message, and `cli.run` prints it as one line and exits 2.
+- `query_status` in the flow-log evidence, `TrailStatusNotRead` in the CloudTrail posture, and `ReplicationNotRead` in the DR S3 summary.
+- 49 tests in `tests/test_report_accuracy.py`, one or more per fix.
+
 ## [1.7.0] - 2026-11-12
 
 ### Fixed

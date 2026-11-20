@@ -279,6 +279,17 @@ def _config(data):
     return _per_region(data, getter)
 
 
+def multi_region_trails_not_read(data) -> list[str]:
+    """Multi-region trails whose status the scan was denied: any of them
+    may be the trail that is logging."""
+    ct = _global(data).get("CloudTrail") or {}
+    return [
+        str(t.get("TrailARN") or t.get("Name"))
+        for t in ct.get("Trails") or []
+        if t.get("_StatusNotRead") and t.get("IsMultiRegionTrail")
+    ]
+
+
 def _cloudtrail(data):
     ct = _global(data).get("CloudTrail")
     if ct is None:
@@ -286,7 +297,11 @@ def _cloudtrail(data):
     ok = ct.get("HasLoggingMultiRegionTrail")
     if ok is None:  # evidence from before 1.4.1
         ok = ct.get("HasMultiRegionTrail") and ct.get("HasLoggingTrail")
-    return [] if ok else [Affected("account", "global", "no multi-region trail is logging")]
+    if ok:
+        return []
+    if multi_region_trails_not_read(data):
+        return None
+    return [Affected("account", "global", "no multi-region trail is logging")]
 
 
 def _cloudtrail_validation(data):
@@ -639,12 +654,15 @@ _BUCKET_CHECKS = {"s3-bucket-public": "PublicAccessBlock", "s3-default-encryptio
 
 
 def _unread_resources(data: dict, check_id: str) -> tuple[str, int]:
-    """("Buckets", 3) or ("KMS keys", 1): the resources a check couldn't
-    read one by one, as opposed to a whole listing that was denied."""
+    """("Buckets", 3), ("KMS keys", 1) or ("Trails", 1): the resources a
+    check couldn't read one by one, as opposed to a whole listing that was
+    denied."""
     if check_id in _BUCKET_CHECKS:
         return "Buckets", len(_buckets_not_read(data, _BUCKET_CHECKS[check_id]))
     if check_id == "kms-rotation":
         return "KMS keys", len(_keys_not_read(data))
+    if check_id == "cloudtrail-multi-region":
+        return "Trails", len(multi_region_trails_not_read(readable_evidence(data)))
     return "", 0
 
 

@@ -117,7 +117,9 @@ IP address in the flow logs actually belongs to).
    and points at `references/flow-logs-setup.md` rather than implying a
    clean bill of health. If the report has an Incomplete Queries section,
    the sections those queries feed are partial: rerun with a shorter
-   `--lookback-hours` before drawing conclusions from them.
+   `--lookback-hours` before drawing conclusions from them. A section that
+   says "Not read" was denied or never finished, so it says nothing about
+   the traffic: never report it as quiet.
 2. Every "possible port scan" or "top external egress" entry is presented
    as a lead to investigate, with the corroborating (or non-corroborating)
    GuardDuty cross-reference stated -- never asserted as confirmed

@@ -104,7 +104,17 @@ missing and crashed the whole security scan.)
 **A call the scan can't work without** stays unwrapped and raises. Every
 script enters through `shared.awslib.cli.run(main)`, which turns that
 denial, and credentials that didn't resolve, into one clear line and exit
-code 2 instead of a traceback.
+code 2 instead of a traceback. For any other condition the user can fix (a
+workload ID that doesn't exist, a report AWS hasn't finished), raise
+`shared.awslib.session.ScanStopped` with the message to show; `run` prints
+it the same way. Check such a condition before the long collection, not
+after it.
+
+**A call that needs a region but isn't tied to a scanned one** (S3 Control,
+`DescribeRegions`, an organization's home region) takes
+`ctx.home_region()`: `--region`, else the profile's region, else
+`us-east-1`. A client with no region fails with `NoRegionError` for a
+regional service, and a bare `us-east-1` fallback ignores the profile.
 
 **Pagination:** use `paginate()` for operations botocore has a paginator
 for, and `manual_paginate()` for those it doesn't (several

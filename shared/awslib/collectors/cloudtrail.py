@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from botocore.exceptions import ClientError
 
-from ..session import AwsContext, ignore_access_denied
+from ..session import PERMISSION_DENIED_CODES, AwsContext, ignore_access_denied
 
 # A trail listed by DescribeTrails but not resolvable from this account or
 # region -- record it with unknown status rather than abort the scan.
@@ -22,33 +22,44 @@ def describe_trails(ctx: AwsContext, region: str) -> list[dict]:
     other than its home region) and for an organization trail seen from a
     member account. By name, those calls raise TrailNotFoundException --
     which crashed every scan run from a region other than the trail's home.
+
+    A trail whose status the scan was denied gets `_StatusNotRead`, and the
+    denial is recorded against that trail: its missing status used to read
+    as "not logging" and fail CloudTrail.1 with nothing in Access Gaps.
     """
     ct = ctx.client("cloudtrail", region=region)
     trails = ct.describe_trails(includeShadowTrails=True).get("trailList", [])
     for trail in trails:
         ref = trail.get("TrailARN") or trail["Name"]
-        trail["_Status"] = _trail_status(ct, ref)
-        trail["_EventSelectors"] = _event_selectors(ct, ref)
+        status = _trail_call(ctx, region, ref, lambda ref=ref: ct.get_trail_status(Name=ref), None)
+        if status is _NOT_READ:
+            trail["_StatusNotRead"] = True
+            status = None
+        trail["_Status"] = status
+        selectors = _trail_call(
+            ctx, region, ref, lambda ref=ref: ct.get_event_selectors(TrailName=ref).get("EventSelectors", []), []
+        )
+        trail["_EventSelectors"] = [] if selectors is _NOT_READ else selectors
     return trails
 
 
-@ignore_access_denied(default=lambda: None)
-def _trail_status(ct, trail_ref: str) -> dict | None:
-    try:
-        return ct.get_trail_status(Name=trail_ref)
-    except ClientError as exc:
-        if exc.response.get("Error", {}).get("Code") in _UNRESOLVABLE_TRAIL_CODES:
-            return None
-        raise
+# What `_trail_call` returns for a read the scan was denied.
+_NOT_READ = object()
 
 
-@ignore_access_denied(default=list)
-def _event_selectors(ct, trail_ref: str) -> list[dict]:
+def _trail_call(ctx: AwsContext, region: str, trail_ref: str, call, unresolvable):
+    """One per-trail read. A trail this account can list but not resolve
+    gets `unresolvable`; a denied read is recorded against the trail and
+    returns `_NOT_READ`; anything else raises."""
     try:
-        return ct.get_event_selectors(TrailName=trail_ref).get("EventSelectors", [])
+        return call()
     except ClientError as exc:
-        if exc.response.get("Error", {}).get("Code") in _UNRESOLVABLE_TRAIL_CODES:
-            return []
+        code = exc.response.get("Error", {}).get("Code")
+        if code in _UNRESOLVABLE_TRAIL_CODES:
+            return unresolvable
+        if code in PERMISSION_DENIED_CODES:
+            ctx.record_denied("describe_trails", region, code, exc.operation_name, trail_ref)
+            return _NOT_READ
         raise
 
 
@@ -69,4 +80,7 @@ def cloudtrail_posture(ctx: AwsContext, home_region: str) -> dict:
         # each be true while no single trail satisfies both.
         "HasLoggingMultiRegionTrail": any(t in logging_trails for t in multi_region),
         "HasLogFileValidation": bool(validated_trails),
+        # Trails whose status the scan was denied: "not logging" above may
+        # be "not known" for these.
+        "TrailStatusNotRead": [t.get("TrailARN") or t.get("Name") for t in trails if t.get("_StatusNotRead")],
     }

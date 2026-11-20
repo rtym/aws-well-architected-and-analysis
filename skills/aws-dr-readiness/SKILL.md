@@ -84,6 +84,14 @@ cluster level, since their instance-level Multi-AZ flag is always false.
 Calculated health checks are listed without a status: Route 53's status
 API doesn't support them, so check them in the console or CloudWatch.
 
+A plan counts as copying cross-region only when a copy rule's destination
+vault is in another region; a copy to another vault in the same region
+(another account's, or a logically air-gapped one) doesn't survive a
+regional outage and isn't counted. S3 buckets whose replication setting
+the scan was denied are in neither the replicated nor the unreplicated
+count; the report gives their number separately. The scan reads RDS for
+its database checks and nothing else from the data tier.
+
 ### Step 2 -- Map evidence to a DR tier, per workload if the user can identify them
 
 Using the strategy-tiers reference, place what you found against the tier

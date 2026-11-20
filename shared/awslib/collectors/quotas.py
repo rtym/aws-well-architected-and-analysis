@@ -11,12 +11,16 @@ from ..session import AwsContext, ignore_access_denied, paginate
 
 # (service_code, quota_code, human label) for quotas that commonly bite
 # production accounts -- not exhaustive, just the ones worth checking by
-# default. Extend this list if a specific review needs more.
+# default. Extend this list if a specific review needs more. Codes and names
+# are from the service's quota table in the AWS General Reference (see
+# SOURCES.md); a code asked for under the wrong service code returns
+# nothing, and the row silently disappears from the evidence.
 COMMON_QUOTAS = (
     ("ec2", "L-1216C47A", "Running On-Demand Standard (A, C, D, H, I, M, R, T, Z) instances"),
     ("vpc", "L-F678F1CE", "VPCs per Region"),
-    ("vpc", "L-0263D0A3", "Security groups per VPC"),
-    ("vpc", "L-DF5E4CA3", "Rules per security group"),
+    ("vpc", "L-E79EC296", "VPC security groups per Region"),
+    ("vpc", "L-0EA8095F", "Inbound or outbound rules per security group"),
+    ("vpc", "L-DF5E4CA3", "Network interfaces per Region"),
     ("elasticloadbalancing", "L-53DA6B97", "Application Load Balancers per Region"),
     ("rds", "L-7B6409FD", "DB instances"),
     ("lambda", "L-B99A9384", "Concurrent executions"),

@@ -83,7 +83,12 @@ tell the user how to enable PDF.
 
 Use `--pillar security` (etc.) to scope to one pillar; use `--workload-id`
 if the user has an existing WA Tool workload and wants improvement items
-already logged there cross-referenced against your findings.
+already logged there cross-referenced against your findings. Workloads are
+regional: the workload is read from the first scanned region, and the
+script checks it before collecting anything else, so a wrong ID or region
+stops the run straight away. If Cost Explorer is denied (common in member
+accounts), the pack is still written: Access Gaps lists the denial, and
+the Cost Optimization questions that need Cost Explorer data are unknown.
 
 This produces an **evidence pack**, not a findings report -- it's raw
 counts and resource lists organized by pillar, plus an explicit prompt at

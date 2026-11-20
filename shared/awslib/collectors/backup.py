@@ -39,14 +39,29 @@ def list_recent_jobs(ctx: AwsContext, region: str, by_state: str | None = None) 
     return list(paginate(backup, "list_backup_jobs", "BackupJobs", **kwargs))
 
 
-def plans_with_cross_region_copy(plans: list[dict]) -> list[dict]:
+def _vault_region(vault_arn: str) -> str | None:
+    """"arn:aws:backup:eu-west-1:123456789012:backup-vault:dr" -> "eu-west-1"."""
+    parts = (vault_arn or "").split(":")
+    return parts[3] if len(parts) > 3 and parts[3] else None
+
+
+def plans_with_cross_region_copy(plans: list[dict], region: str) -> list[dict]:
+    """Plans in `region` with a rule that copies recovery points to a vault
+    in another region. A copy to another vault in the same region (another
+    account's, or a logically air-gapped one) is a copy, but it doesn't
+    survive a regional outage, and counting it passed the cross-region check."""
     matches = []
     for plan in plans:
-        copy_actions = [
-            rule for rule in plan.get("_Rules", []) if rule.get("CopyActions")
+        rules = [
+            rule
+            for rule in plan.get("_Rules", [])
+            if any(
+                _vault_region(action.get("DestinationBackupVaultArn")) not in (None, region)
+                for action in rule.get("CopyActions") or []
+            )
         ]
-        if copy_actions:
-            matches.append({"BackupPlanId": plan["BackupPlanId"], "BackupPlanName": plan.get("BackupPlanName"), "Rules": copy_actions})
+        if rules:
+            matches.append({"BackupPlanId": plan["BackupPlanId"], "BackupPlanName": plan.get("BackupPlanName"), "Rules": rules})
     return matches
 
 
@@ -58,5 +73,5 @@ def collect_region_backup(ctx: AwsContext, region: str) -> dict:
         "BackupVaults": list_backup_vaults(ctx, region),
         "ProtectedResources": list_protected_resources(ctx, region),
         "FailedJobsRecent": list_recent_jobs(ctx, region, by_state="FAILED"),
-        "PlansWithCrossRegionCopy": plans_with_cross_region_copy(plans),
+        "PlansWithCrossRegionCopy": plans_with_cross_region_copy(plans, region),
     }

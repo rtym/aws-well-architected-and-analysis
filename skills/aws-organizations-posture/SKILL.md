@@ -33,6 +33,9 @@ account **delegated as an administrator** for Organizations. Warn them
 up front if they're unsure, since a plain member account will correctly
 report "not part of an organization" (or hit AccessDenied on most calls)
 and that's not a bug, it's the expected result for the wrong account.
+Where a call was denied, the report says "unknown" (and its KPI tile
+"n/a") instead of "no accounts", "no SCP", or "not configured"; repeat
+that as unknown, never as a gap.
 
 Load the checklist, and the writing-style rules any prose you add on top
 of the generated report follows:
