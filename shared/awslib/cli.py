@@ -7,7 +7,7 @@ import sys
 
 from botocore.exceptions import BotoCoreError, ClientError
 
-from .session import PERMISSION_DENIED_CODES, AwsContext
+from .session import PERMISSION_DENIED_CODES, AwsContext, ScanStopped
 
 
 def base_parser(description: str) -> argparse.ArgumentParser:
@@ -62,10 +62,14 @@ def run(main, argv=None) -> int:
 
     Calls a scan can work without never get here: their collectors are
     wrapped in `ignore_access_denied` and show up in the report's Access
-    Gaps section instead.
+    Gaps section instead. A script raises `ScanStopped` for other conditions
+    the user can fix, such as a workload ID that doesn't exist.
     """
     try:
         return main(argv)
+    except ScanStopped as exc:
+        print(f"Stopped: {exc}", file=sys.stderr)
+        return 2
     except ClientError as exc:
         error = exc.response.get("Error", {})
         if error.get("Code") not in PERMISSION_DENIED_CODES:

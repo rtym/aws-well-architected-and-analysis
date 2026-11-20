@@ -62,9 +62,17 @@ def rds_dr_signals(rds_instances: list[dict], rds_clusters: list[dict]) -> dict:
 
 
 def s3_replication_signals(buckets: list[dict]) -> dict:
-    replicated = [b for b in buckets if b.get("_Replication")]
-    unreplicated = [b for b in buckets if not b.get("_Replication")]
-    return {"ReplicatedBuckets": replicated, "UnreplicatedBuckets": unreplicated}
+    """Buckets with and without replication, and those whose replication
+    setting the scan was denied. Those are neither: counting them as
+    unreplicated reported a gap nobody had seen."""
+    def read(bucket: dict) -> bool:
+        return "Replication" not in (bucket.get("_Unreadable") or [])
+
+    return {
+        "ReplicatedBuckets": [b for b in buckets if read(b) and b.get("_Replication")],
+        "UnreplicatedBuckets": [b for b in buckets if read(b) and not b.get("_Replication")],
+        "ReplicationNotRead": [b for b in buckets if not read(b)],
+    }
 
 
 def dr_readiness_summary(

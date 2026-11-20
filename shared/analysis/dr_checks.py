@@ -30,8 +30,15 @@ def _backup(data: dict) -> dict | None:
     return _summary(data).get("Backup")
 
 
-def rds_instance_count(data: dict) -> int:
-    return sum(len((r.get("DataStores") or {}).get("RdsInstances") or []) for r in (data.get("Regions") or {}).values())
+def standalone_instance_count(data: dict) -> int:
+    """RDS instances outside any cluster: the ones the instance-level
+    Multi-AZ check judges. Cluster members are judged at the cluster level."""
+    return sum(
+        1
+        for r in (data.get("Regions") or {}).values()
+        for i in (r.get("DataStores") or {}).get("RdsInstances") or []
+        if not i.get("DBClusterIdentifier")
+    )
 
 
 def rds_cluster_count(data: dict) -> int:
@@ -95,7 +102,10 @@ def _failed_jobs(data):
 
 def _single_az_instances(data):
     rds = _summary(data).get("Rds")
-    if rds is None or not rds_instance_count(data):
+    # Only standalone instances are judged here: with none (an Aurora-only
+    # account), "every standalone instance is Multi-AZ" was a PASS about
+    # nothing.
+    if rds is None or not standalone_instance_count(data):
         return None
     affected = [Affected(str(i.get("DBInstanceIdentifier")), _region_of(i), i.get("Engine") or "") for i in rds.get("SingleAzInstances") or []]
     return affected or (None if access.was_denied(data, "describe_rds_instances") else [])

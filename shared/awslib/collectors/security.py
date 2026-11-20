@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 from botocore.exceptions import ClientError
 
-from ..session import AwsContext, ignore_access_denied, paginate
+from ..session import AwsContext, ScanStopped, ignore_access_denied, paginate
 
 
 # ---------------------------------------------------------------- GuardDuty
@@ -146,13 +146,20 @@ def iam_credential_report(ctx: AwsContext) -> list[dict]:
     """The IAM credential report, generated on demand. AWS usually finishes
     it in a few seconds but can take longer in an account with many users;
     ten one-second tries gave up early there and the read that followed
-    failed with ReportInProgress. Waits up to a minute now."""
+    failed with ReportInProgress. Waits up to a minute now, then stops the
+    scan with a message instead of a traceback."""
     iam = ctx.client("iam")
     for _ in range(CREDENTIAL_REPORT_ATTEMPTS):
         resp = iam.generate_credential_report()
         if resp["State"] == "COMPLETE":
             break
         time.sleep(CREDENTIAL_REPORT_WAIT_SECONDS)
+    else:
+        raise ScanStopped(
+            f"IAM was still generating the credential report after "
+            f"{CREDENTIAL_REPORT_ATTEMPTS * CREDENTIAL_REPORT_WAIT_SECONDS} seconds.\n"
+            "  AWS keeps generating it in the background; run the scan again in a minute or two."
+        )
     report = iam.get_credential_report()
     text = report["Content"].decode("utf-8")
     return list(csv.DictReader(io.StringIO(text)))
@@ -395,7 +402,9 @@ def account_public_access_block(ctx: AwsContext) -> dict | None:
     """The account-wide S3 Block Public Access configuration (FSBP S3.1).
     Per-bucket settings (collected in data_stores) can be loosened bucket by
     bucket; this account-level switch is the backstop. None = not set."""
-    s3control = ctx.client("s3control")
+    # S3 Control is regional: a client with no region fails with
+    # NoRegionError when the profile has none set.
+    s3control = ctx.client("s3control", region=ctx.home_region())
     try:
         return s3control.get_public_access_block(AccountId=ctx.account_id())[
             "PublicAccessBlockConfiguration"

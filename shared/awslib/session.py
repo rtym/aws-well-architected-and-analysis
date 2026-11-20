@@ -22,6 +22,12 @@ RETRY_CONFIG = BotoConfig(retries={"max_attempts": 8, "mode": "adaptive"})
 PERMISSION_DENIED_CODES = frozenset({"AccessDenied", "AccessDeniedException", "UnauthorizedOperation"})
 
 
+class ScanStopped(Exception):
+    """A condition the user can fix (a wrong ID, a report AWS hasn't
+    finished), raised with the message to show them. `cli.run` prints it
+    as one line and exits 2 instead of printing a traceback."""
+
+
 @dataclass
 class AwsContext:
     """Bundles a boto3 session plus the account/region scope for a run."""
@@ -59,6 +65,14 @@ class AwsContext:
         if entry not in self.denied:
             self.denied.append(entry)
 
+    def home_region(self) -> str:
+        """The region for calls that need one but aren't tied to a scanned
+        region: --region, else the profile or environment default, else
+        us-east-1. A client created with no region at all fails with
+        NoRegionError for regional services (s3control, ec2), and falling
+        straight back to us-east-1 ignored a profile set to another region."""
+        return self.region or self.session.region_name or "us-east-1"
+
     def account_id(self) -> str:
         # Several per-region collectors need the account ID; one STS call
         # per run is enough.
@@ -68,7 +82,7 @@ class AwsContext:
 
     def enabled_regions(self) -> list[str]:
         """Regions enabled for this account (opt-in regions included)."""
-        ec2 = self.client("ec2", region=self.region or "us-east-1")
+        ec2 = self.client("ec2", region=self.home_region())
         resp = ec2.describe_regions(AllRegions=False)
         return sorted(r["RegionName"] for r in resp["Regions"])
 

@@ -49,17 +49,59 @@ def collect(ctx, region: str, log_group: str, lookback_hours: int) -> dict:
     return data
 
 
+# The GuardDuty collectors behind NetworkFindings.
+GUARDDUTY_COLLECTORS = ("guardduty_detector_ids", "guardduty_findings")
+
+
+def _status(flow: dict, query: str) -> str:
+    """A query's final status. Evidence from before 1.8.0 has none
+    recorded and reads as Complete."""
+    return (flow.get("query_status") or {}).get(query, "Complete")
+
+
+def _not_read(flow: dict, query: str) -> str | None:
+    """Why a query's section has no rows when that isn't "nothing
+    happened": the query was denied or never finished. None otherwise."""
+    status = _status(flow, query)
+    if status == "Denied":
+        return "Not read: the scan was denied the Logs Insights query (see Access Gaps)."
+    if status != "Complete":
+        return f"Not read: the query ended with status {status} (see Incomplete Queries)."
+    return None
+
+
+def _findings_not_read(data: dict) -> bool:
+    return not data["NetworkFindings"] and access.was_denied(data, *GUARDDUTY_COLLECTORS)
+
+
 def _add_kpis(report: Report, data: dict) -> None:
     flow = data["FlowLogAnalysis"]
-    total_bytes = sum(float(r.get("totalBytes", 0) or 0) for r in flow.get("traffic_by_protocol", []))
-    report.add_kpi("Traffic observed", charts.format_value(total_bytes, "bytes"), "all protocols in the window")
-    rejects = sum(int(float(r.get("rejects", 0) or 0)) for r in flow.get("rejected_traffic", []))
-    report.add_kpi("Rejected flows", charts.format_value(rejects, "count"), "top source/destination/port groups", "warn" if rejects else "good")
-    scans = len(flow.get("port_scan_candidates", []))
-    report.add_kpi("Port-scan suspects", scans, f">= {nt.PORT_SCAN_DISTINCT_PORT_THRESHOLD} distinct ports", "bad" if scans else "good")
+
+    def unread_kpi(label: str, query: str, rows: list) -> bool:
+        # No rows behind a query that didn't complete is not a zero.
+        if rows or _status(flow, query) == "Complete":
+            return False
+        report.add_kpi(label, "n/a", "denied" if _status(flow, query) == "Denied" else "query did not finish")
+        return True
+
+    protocols = flow.get("traffic_by_protocol", [])
+    if not unread_kpi("Traffic observed", "traffic_by_protocol", protocols):
+        total_bytes = sum(float(r.get("totalBytes", 0) or 0) for r in protocols)
+        report.add_kpi("Traffic observed", charts.format_value(total_bytes, "bytes"), "all protocols in the window")
+    rejected = flow.get("rejected_traffic", [])
+    if not unread_kpi("Rejected flows", "rejected_traffic", rejected):
+        rejects = sum(int(float(r.get("rejects", 0) or 0)) for r in rejected)
+        report.add_kpi("Rejected flows", charts.format_value(rejects, "count"), "top source/destination/port groups", "warn" if rejects else "good")
+    scans = flow.get("port_scan_candidates", [])
+    if not unread_kpi("Port-scan suspects", "distinct_dst_ports_per_src", scans):
+        report.add_kpi("Port-scan suspects", len(scans), f">= {nt.PORT_SCAN_DISTINCT_PORT_THRESHOLD} distinct ports", "bad" if scans else "good")
     egress = flow.get("top_external_egress", [])
-    report.add_kpi("External destinations", len({r.get("dstAddr") for r in egress}), "in the top egress flows")
+    if not unread_kpi("External destinations", "top_external_egress", egress):
+        report.add_kpi("External destinations", len({r.get("dstAddr") for r in egress}), "in the top egress flows")
     findings = data["NetworkFindings"]
+    if _findings_not_read(data):
+        report.add_kpi("GuardDuty network findings", "n/a", "access denied")
+        return
     high = sum(1 for f in findings if float(f.get("Severity", 0) or 0) >= 7.0)
     report.add_kpi(
         "GuardDuty network findings",
@@ -108,7 +150,7 @@ def build_report(data: dict, region: str, log_group: str) -> Report:
         chart_uri = charts.bar_chart(labels, values, title="Top talkers by bytes transferred", horizontal=True, value_format="bytes")
         report.add_section("Top Talkers", f"![Top talkers]({chart_uri})")
     else:
-        report.add_section("Top Talkers", "No flow log records in this window.")
+        report.add_section("Top Talkers", _not_read(flow, "top_talkers_by_bytes") or "No flow log records in this window.")
 
     protocol_mix = flow.get("traffic_by_protocol", [])
     if protocol_mix:
@@ -117,7 +159,7 @@ def build_report(data: dict, region: str, log_group: str) -> Report:
         chart_uri = charts.donut_chart(labels, values, title="Traffic volume by protocol", value_format="bytes")
         report.add_section("Protocol Mix", f"![Protocol mix]({chart_uri})")
     else:
-        report.add_section("Protocol Mix", "No flow log records in this window.")
+        report.add_section("Protocol Mix", _not_read(flow, "traffic_by_protocol") or "No flow log records in this window.")
 
     rejected = flow.get("rejected_traffic", [])
     if rejected:
@@ -127,7 +169,7 @@ def build_report(data: dict, region: str, log_group: str) -> Report:
         ]
         report.add_section("Rejected Traffic (top src/dst/port)", findings_table(rows, ["Source", "Destination", "Port", "Rejects"]))
     else:
-        report.add_section("Rejected Traffic (top src/dst/port)", "No rejected flows in this window.")
+        report.add_section("Rejected Traffic (top src/dst/port)", _not_read(flow, "rejected_traffic") or "No rejected flows in this window.")
 
     scan_candidates = flow.get("port_scan_candidates", [])
     if scan_candidates:
@@ -138,7 +180,10 @@ def build_report(data: dict, region: str, log_group: str) -> Report:
             + findings_table(rows, ["Source", "Distinct destination ports"]),
         )
     else:
-        report.add_section("Possible Port Scan Activity", "No source exceeded the distinct-destination-port threshold.")
+        report.add_section(
+            "Possible Port Scan Activity",
+            _not_read(flow, "distinct_dst_ports_per_src") or "No source exceeded the distinct-destination-port threshold.",
+        )
 
     external_egress = flow.get("top_external_egress", [])
     if external_egress:
@@ -148,7 +193,10 @@ def build_report(data: dict, region: str, log_group: str) -> Report:
         ]
         report.add_section("Top External Egress (non-RFC1918 destinations)", findings_table(rows, ["Source", "External destination", "Bytes"]))
     else:
-        report.add_section("Top External Egress (non-RFC1918 destinations)", "No external egress observed in this window.")
+        report.add_section(
+            "Top External Egress (non-RFC1918 destinations)",
+            _not_read(flow, "top_external_egress") or "No external egress observed in this window.",
+        )
 
     network_findings = data["NetworkFindings"]
     if network_findings:
@@ -160,6 +208,11 @@ def build_report(data: dict, region: str, log_group: str) -> Report:
         report.add_section(
             "GuardDuty Network-Related Findings",
             findings_table(rows, ["Type", "Severity", "Resource"]) + f"\n\n{legend}",
+        )
+    elif _findings_not_read(data):
+        report.add_section(
+            "GuardDuty Network-Related Findings",
+            "Not read: the scan was denied the GuardDuty calls (see Access Gaps).",
         )
     else:
         report.add_section("GuardDuty Network-Related Findings", "No active Recon/UnauthorizedAccess/Trojan/Backdoor findings.")

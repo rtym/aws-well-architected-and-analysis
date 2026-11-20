@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import time
 
+from botocore.exceptions import ClientError
+
 from ..session import AwsContext, ignore_access_denied
 from .security import guardduty_findings
 
@@ -86,10 +88,22 @@ def query_with_status(
             break
         time.sleep(2)
         waited += 2
+    if resp["status"] in ("Scheduled", "Running"):
+        _stop_query(logs, query_id)
     rows = []
     for result in resp.get("results", []):
         rows.append({field["field"]: field["value"] for field in result})
     return rows, resp["status"]
+
+
+def _stop_query(logs, query_id: str) -> None:
+    """Stop a query the local timeout gave up on: left running, it keeps
+    scanning (and billing) and holds one of the account's concurrent
+    Logs Insights query slots. Best effort; the rows are already read."""
+    try:
+        logs.stop_query(queryId=query_id)
+    except ClientError:
+        pass
 
 
 def analyze_flow_logs(
@@ -98,9 +112,11 @@ def analyze_flow_logs(
     """Run every canned query and layer a port-scan heuristic on top."""
     results = {}
     incomplete = []
+    statuses = {}
     for name, query in QUERIES.items():
         rows, status = query_with_status(ctx, region, log_group, query, start_time, end_time)
         results[name] = rows
+        statuses[name] = status
         # A denied query is listed under Access Gaps instead.
         if status not in ("Complete", "Denied"):
             incomplete.append({"Query": name, "Status": status})
@@ -111,6 +127,9 @@ def analyze_flow_logs(
     ]
     results["port_scan_candidates"] = scan_candidates
     results["incomplete_queries"] = incomplete
+    # Every query's final status, so the report can tell "no such traffic"
+    # from a query that was denied or never finished.
+    results["query_status"] = statuses
     return results
 
 

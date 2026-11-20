@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime
 import decimal
 import json
+import os
 
 
 def default(obj):
@@ -21,5 +22,12 @@ def dumps(obj, **kwargs) -> str:
 
 
 def write(obj, path: str) -> None:
+    """Write `obj` as JSON, creating the parent directory first. Scripts
+    write the evidence before the report (which creates --output-dir), so
+    the documented `--json-out reports/output/...` failed on a first run,
+    after the whole scan."""
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     with open(path, "w") as fh:
         fh.write(dumps(obj))

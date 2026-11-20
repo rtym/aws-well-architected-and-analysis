@@ -353,7 +353,7 @@ def main(argv=None) -> int:
     co_regions = (
         [r.strip() for r in args.compute_optimizer_regions.split(",") if r.strip()]
         if args.compute_optimizer_regions
-        else [ctx.region or "us-east-1"]
+        else [ctx.home_region()]
     )
 
     data = collect(ctx, start, end, co_regions)

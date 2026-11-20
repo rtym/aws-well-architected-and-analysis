@@ -32,7 +32,7 @@ def test_backup_plans_with_cross_region_copy(ctx):
 
     plans = backup.list_backup_plans(ctx, "us-east-1")
     assert len(plans) == 1
-    cross_region = backup.plans_with_cross_region_copy(plans)
+    cross_region = backup.plans_with_cross_region_copy(plans, "us-east-1")
     assert len(cross_region) == 1
 
     vaults = backup.list_backup_vaults(ctx, "us-east-1")
@@ -52,7 +52,7 @@ def test_backup_plans_without_copy_action_not_flagged(ctx):
     )
 
     plans = backup.list_backup_plans(ctx, "us-east-1")
-    assert backup.plans_with_cross_region_copy(plans) == []
+    assert backup.plans_with_cross_region_copy(plans, "us-east-1") == []
 
 
 def test_rds_dr_signals_flags_single_az_and_replicas():
@@ -214,7 +214,7 @@ def test_rds_dr_signals_judges_cluster_members_at_cluster_level():
 def test_collect_region_backup_wires_every_collector_and_derives_copy_plans(monkeypatch, ctx):
     """The entry point the DR and WA scripts call had no test of its own."""
     plans = [
-        {"BackupPlanId": "p-copy", "BackupPlanName": "daily", "_Rules": [{"RuleName": "r", "CopyActions": [{"DestinationBackupVaultArn": "arn:vault:dr"}]}]},
+        {"BackupPlanId": "p-copy", "BackupPlanName": "daily", "_Rules": [{"RuleName": "r", "CopyActions": [{"DestinationBackupVaultArn": "arn:aws:backup:us-east-1:123456789012:backup-vault:dr"}]}]},
         {"BackupPlanId": "p-local", "BackupPlanName": "local", "_Rules": [{"RuleName": "r"}]},
     ]
     monkeypatch.setattr(backup, "list_backup_plans", lambda ctx, region: plans)

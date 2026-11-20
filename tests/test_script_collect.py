@@ -189,14 +189,14 @@ def test_dr_readiness_collect_merges_backup_and_builds_summary(monkeypatch):
             "ProtectedResources": [],
         }
 
-    def fake_region_data_stores(ctx, region):
-        return {
-            "RdsInstances": [{"DBInstanceIdentifier": f"db-{region}", "MultiAZ": region == "eu-west-1"}],
-            "RdsClusters": [],
-        }
-
     monkeypatch.setattr(dr_readiness.backup, "collect_region_backup", fake_backup)
-    monkeypatch.setattr(dr_readiness.data_stores, "collect_region_data_stores", fake_region_data_stores)
+    monkeypatch.setattr(
+        dr_readiness.data_stores,
+        "describe_rds_instances",
+        lambda ctx, region: [{"DBInstanceIdentifier": f"db-{region}", "MultiAZ": region == "eu-west-1"}],
+    )
+    monkeypatch.setattr(dr_readiness.data_stores, "describe_rds_clusters", lambda ctx, region: [])
+    monkeypatch.setattr(dr_readiness.data_stores, "describe_rds_snapshots", lambda ctx, region: [])
     monkeypatch.setattr(
         dr_readiness.data_stores, "collect_global_data_stores", lambda ctx: {"S3Buckets": [{"Name": "b", "_Replication": None}]}
     )

@@ -493,11 +493,14 @@ def _evidence_sections(report: Report, data: dict) -> None:
 
     readable = security_checks.readable_evidence(data)
     ct = data["Global"]["CloudTrail"]
+    # A trail whose status the scan was denied makes "not logging" unknown.
+    not_read = len(ct.get("TrailStatusNotRead") or [])
+    unknown = f"unknown (the scan was denied the status of {_plural(not_read, 'trail')}; see Access Gaps)"
     ct_lines = ["- **Trails could not be listed** (see Access Gaps), so nothing below is known."] if "CloudTrail" not in readable["Global"] else [
         f"- **Multi-region trail configured:** {'yes' if ct['HasMultiRegionTrail'] else 'NO -- gap'}",
-        f"- **A trail is actively logging:** {'yes' if ct['HasLoggingTrail'] else 'NO -- gap'}",
+        f"- **A trail is actively logging:** {'yes' if ct['HasLoggingTrail'] else unknown if not_read else 'NO -- gap'}",
         f"- **A multi-region trail is logging (CloudTrail.1):** "
-        f"{'yes' if ct.get('HasLoggingMultiRegionTrail', ct['HasMultiRegionTrail'] and ct['HasLoggingTrail']) else 'NO -- gap'}",
+        f"{'yes' if ct.get('HasLoggingMultiRegionTrail', ct['HasMultiRegionTrail'] and ct['HasLoggingTrail']) else unknown if security_checks.multi_region_trails_not_read(data) else 'NO -- gap'}",
         f"- **Log file validation enabled:** {'yes' if ct['HasLogFileValidation'] else 'no'}",
         f"- **Trails found:** {len(ct['Trails'])}",
     ]

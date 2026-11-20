@@ -104,7 +104,8 @@ _LEGEND = {
     "subnet": (
         "Subnet",
         "address range in one Availability Zone;<br/>Public = route to the Internet Gateway, "
-        "Private = out through a NAT Gateway, Isolated = no default route",
+        "Private = default route through a NAT, transit or VPN gateway or an appliance, "
+        "Isolated = no default route",
     ),
     "gateway": (
         "Gateway",
@@ -148,12 +149,28 @@ def _subnet_route_table(subnet: dict, route_tables: list[dict]) -> dict | None:
     return None
 
 
-def _default_route(route_table: dict | None) -> dict:
-    """The 0.0.0.0/0 (or ::/0) route, i.e. what makes a subnet public or not."""
-    for route in (route_table or {}).get("Routes", []):
-        if route.get("DestinationCidrBlock") == "0.0.0.0/0" or route.get("DestinationIpv6CidrBlock") == "::/0":
-            return route
-    return {}
+def _default_routes(route_table: dict | None) -> list[dict]:
+    """The 0.0.0.0/0 and ::/0 routes, i.e. what makes a subnet public or
+    not. A blackhole route (its target was deleted) carries no traffic."""
+    return [
+        route
+        for route in (route_table or {}).get("Routes", [])
+        if (route.get("DestinationCidrBlock") == "0.0.0.0/0" or route.get("DestinationIpv6CidrBlock") == "::/0")
+        and route.get("State") != "blackhole"
+    ]
+
+
+# Route fields naming a default-route target that isn't an internet, NAT,
+# transit, or VPN gateway: an appliance or another network.
+_OTHER_TARGETS = (
+    "NetworkInterfaceId",
+    "InstanceId",
+    "VpcPeeringConnectionId",
+    "LocalGatewayId",
+    "CarrierGatewayId",
+    "CoreNetworkArn",
+    "GatewayId",
+)
 
 
 def _subnet_connectivity(subnet: dict, route_tables: list[dict]) -> tuple[str, str, str]:
@@ -161,21 +178,42 @@ def _subnet_connectivity(subnet: dict, route_tables: list[dict]) -> tuple[str, s
 
     `role` is Public/Private/Isolated as inferred from the default route, and
     the label spells out the route that justifies it -- that sentence is what
-    ends up on the connector in the diagram.
+    ends up on the connector in the diagram. Public wins if either address
+    family routes to an Internet Gateway; a default route to anything else
+    (a NAT, transit, or VPN gateway, an appliance) is Private. Only a subnet
+    with no default route at all is Isolated: a route through a VPN gateway
+    or a NAT instance used to be drawn as "no 0.0.0.0/0 route".
     """
     rt = _subnet_route_table(subnet, route_tables)
     rtb = (rt or {}).get("RouteTableId") or "no route table"
-    route = _default_route(rt)
-    gateway = route.get("GatewayId") or ""
-    nat = route.get("NatGatewayId") or ""
-    tgw = route.get("TransitGatewayId") or ""
-    if gateway.startswith("igw-"):
-        return "Public", gateway, f"0.0.0.0/0 via {rtb}: any protocol, inbound and outbound"
-    if nat:
-        return "Private", nat, f"0.0.0.0/0 via {rtb}: outbound only, replies allowed"
-    if tgw:
-        return "Private", tgw, f"0.0.0.0/0 via {rtb}: private routing only, no internet"
-    return "Isolated", "", f"no 0.0.0.0/0 route in {rtb}"
+    routes = _default_routes(rt)
+
+    def dest(route: dict) -> str:
+        return route.get("DestinationCidrBlock") or route.get("DestinationIpv6CidrBlock")
+
+    def first(predicate) -> dict | None:
+        return next((r for r in routes if predicate(r)), None)
+
+    route = first(lambda r: (r.get("GatewayId") or "").startswith("igw-"))
+    if route:
+        return "Public", route["GatewayId"], f"{dest(route)} via {rtb}: any protocol, inbound and outbound"
+    route = first(lambda r: r.get("NatGatewayId"))
+    if route:
+        return "Private", route["NatGatewayId"], f"{dest(route)} via {rtb}: outbound only, replies allowed"
+    route = first(lambda r: r.get("TransitGatewayId"))
+    if route:
+        return "Private", route["TransitGatewayId"], f"{dest(route)} via {rtb}: private routing only, no internet"
+    route = first(lambda r: (r.get("GatewayId") or "").startswith("vgw-"))
+    if route:
+        return "Private", route["GatewayId"], f"{dest(route)} via {rtb}: to the VPN gateway, private routing to on-premises"
+    route = first(lambda r: any(r.get(k) for k in _OTHER_TARGETS))
+    if route:
+        target = next(r for r in (route.get(k) for k in _OTHER_TARGETS) if r)
+        return "Private", target, f"{dest(route)} via {rtb}: to {target}, not directly to the internet"
+    route = first(lambda r: r.get("EgressOnlyInternetGatewayId"))
+    if route:
+        return "Private", route["EgressOnlyInternetGatewayId"], f"{dest(route)} via {rtb}: IPv6 outbound only"
+    return "Isolated", "", f"no 0.0.0.0/0 or ::/0 route in {rtb}"
 
 
 def _legend_lines(used: dict[str, int]) -> list[str]:
@@ -353,12 +391,16 @@ def _add_kpis(report: Report, inventory: dict, region_counts: dict, totals: dict
         report.add_kpi(label, sum(totals.get(k, 0) for k in keys))
     global_ds = inventory["Global"]["DataStores"]
     public = len(global_ds["PubliclyAccessibleBuckets"])
-    report.add_kpi(
-        "S3 buckets",
-        len(global_ds["S3Buckets"]),
-        f"{public} not fully blocking public access" if public else "all block public access",
-        "warn" if public else "neutral",
-    )
+    # A bucket whose settings were denied is in neither count, so "all"
+    # can only be claimed when every bucket was read.
+    not_read = len(global_ds.get("BucketsNotRead") or [])
+    if public:
+        note = f"{public} not fully blocking public access"
+    elif not_read:
+        note = f"{not_read} not read; the rest block public access"
+    else:
+        note = "all block public access"
+    report.add_kpi("S3 buckets", len(global_ds["S3Buckets"]), note, "warn" if public else "neutral")
     open_rules = sum(len(r["Network"]["WideOpenSecurityGroupRules"]) for r in inventory["Regions"].values())
     report.add_kpi("Internet-open SG rules", open_rules, "0.0.0.0/0 or ::/0 inbound", "warn" if open_rules else "neutral")
 
@@ -418,6 +460,11 @@ def build_report(inventory: dict, region_counts: dict[str, dict[str, int]]) -> R
         f"- **Publicly accessible buckets:** {len(global_ds['PubliclyAccessibleBuckets'])}",
         f"- **Unencrypted buckets:** {len(global_ds['UnencryptedBuckets'])}",
     ]
+    if global_ds.get("BucketsNotRead"):
+        global_body.append(
+            f"- **Buckets the scan couldn't read:** {len(global_ds['BucketsNotRead'])} (see Access Gaps); "
+            "they are in neither count above"
+        )
     report.add_section("Global Resources (S3)", "\n".join(global_body))
 
     access.add_section(report, inventory)

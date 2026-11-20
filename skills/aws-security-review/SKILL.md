@@ -75,7 +75,9 @@ The report leads with the analysis, then keeps the raw evidence below it:
   passed checks divided by checks with data, the same method Security Hub
   uses for its security score; NO DATA checks are left out. A check is
   NO DATA when the scan was denied the call behind it: the report lists
-  those calls under Access Gaps and never scores them as a pass or a fail. Severity does
+  those calls under Access Gaps and never scores them as a pass or a fail.
+  That includes a multi-region trail whose status the scan couldn't read:
+  CloudTrail.1 is NO DATA unless another trail is known to be logging. Severity does
   not weight it, so always quote it together with the critical and high
   counts in the KPI tiles.
 - **Executive summary** and **priority actions**: the ten most important

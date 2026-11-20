@@ -39,7 +39,7 @@ def collect(ctx, regions: list[str]) -> dict:
     all_rds_clusters = []
     for region in regions:
         backup_data = backup.collect_region_backup(ctx, region)
-        data_store_data = data_stores.collect_region_data_stores(ctx, region)
+        data_store_data = rds_evidence(ctx, region)
         data["Regions"][region] = {"Backup": backup_data, "DataStores": data_store_data}
         all_rds_instances.extend(data_store_data["RdsInstances"])
         all_rds_clusters.extend(data_store_data["RdsClusters"])
@@ -64,6 +64,19 @@ def collect(ctx, regions: list[str]) -> dict:
     # unread, not empty, and the checks score it as NO DATA.
     data[access.KEY] = access.denied_calls(ctx)
     return data
+
+
+def rds_evidence(ctx, region: str) -> dict:
+    """The data-store evidence the DR checks read: RDS instances, clusters,
+    and manual snapshots. The full data-store inventory also listed
+    DynamoDB, ElastiCache, and Lambda, which nothing here reads, and a
+    credential without those permissions stopped the whole DR scan."""
+    return {
+        "Region": region,
+        "RdsInstances": data_stores.describe_rds_instances(ctx, region),
+        "RdsClusters": data_stores.describe_rds_clusters(ctx, region),
+        "RdsManualSnapshots": data_stores.describe_rds_snapshots(ctx, region),
+    }
 
 
 def _merge_backup(regions: dict) -> dict:
@@ -101,7 +114,8 @@ def _add_headline(report: Report, data: dict, results: list) -> None:
     summary = data["Summary"]
     b = summary["Backup"]
     rds = summary["Rds"]
-    instances = dr_checks.rds_instance_count(data)
+    standalone = dr_checks.standalone_instance_count(data)
+    clusters = dr_checks.rds_cluster_count(data)
     single_az = len(rds["SingleAzInstances"]) + len(rds.get("SingleAzClusters", []))
     if not b["PlanCount"] and access.was_denied(data, "list_backup_plans"):
         report.add_kpi("Backup plans", "n/a", "access denied")
@@ -111,16 +125,27 @@ def _add_headline(report: Report, data: dict, results: list) -> None:
         report.add_kpi("Protected resources", "n/a", "access denied")
     else:
         report.add_kpi("Protected resources", b["ProtectedResourceCount"], "with AWS Backup recovery points", "good" if b["ProtectedResourceCount"] else "bad")
-    report.add_kpi("Failed backup jobs", b["RecentFailedJobs"], "recent", "warn" if b["RecentFailedJobs"] else "good")
+    if not b["RecentFailedJobs"] and access.was_denied(data, "list_recent_jobs"):
+        report.add_kpi("Failed backup jobs", "n/a", "access denied")
+    else:
+        report.add_kpi("Failed backup jobs", b["RecentFailedJobs"], "recent", "warn" if b["RecentFailedJobs"] else "good")
+    # Standalone instances and clusters are the units the checks judge;
+    # cluster members are counted through their cluster.
     report.add_kpi(
         "Single-AZ databases",
         single_az,
-        f"of {instances} RDS instance(s)" if instances else "no RDS instances",
-        "warn" if single_az else ("good" if instances else "neutral"),
+        f"of {standalone} standalone instance(s) and {clusters} cluster(s)" if standalone or clusters else "no RDS databases",
+        "warn" if single_az else ("good" if standalone or clusters else "neutral"),
     )
     s3 = summary["S3"]
     buckets = len(s3["ReplicatedBuckets"]) + len(s3["UnreplicatedBuckets"])
-    report.add_kpi("S3 replication", f"{len(s3['ReplicatedBuckets'])}/{buckets}", "buckets replicating", "neutral")
+    not_read = len(s3.get("ReplicationNotRead") or [])
+    report.add_kpi(
+        "S3 replication",
+        f"{len(s3['ReplicatedBuckets'])}/{buckets}",
+        "buckets replicating" + (f"; {not_read} not read" if not_read else ""),
+        "neutral",
+    )
     report.add_kpi("Health checks", len(summary["Route53HealthChecks"]), "Route 53", "neutral")
 
 
@@ -222,15 +247,40 @@ def build_report(data: dict) -> Report:
         if single_az_clusters:
             rows = [{"DB cluster": c.get("DBClusterIdentifier"), "Engine": c.get("Engine")} for c in single_az_clusters]
             report.add_section("RDS Clusters in a Single Availability Zone", findings_table(rows, ["DB cluster", "Engine"]))
+    elif dr_checks.standalone_instance_count(data) or dr_checks.rds_cluster_count(data):
+        # Databases exist, and none is single-AZ, replicated, or global.
+        report.add_section(
+            "RDS Disaster Recovery Signals",
+            f"{dr_checks.standalone_instance_count(data)} standalone instance(s) and "
+            f"{dr_checks.rds_cluster_count(data)} cluster(s) found. Every one spans more than one "
+            "Availability Zone; none has a read replica or a cross-region or global copy."
+            + (
+                " The scan was denied part of the RDS evidence (see Access Gaps)."
+                if access.was_denied(data, "describe_rds_instances", "describe_rds_clusters")
+                else ""
+            ),
+        )
+    elif access.was_denied(data, "describe_rds_instances", "describe_rds_clusters"):
+        report.add_section(
+            "RDS Disaster Recovery Signals",
+            "Not read: the scan was denied the RDS calls (see Access Gaps).",
+        )
     else:
         report.add_section("RDS Disaster Recovery Signals", "No RDS instances found in the scanned region(s).")
 
     s3 = summary["S3"]
+    not_read = s3.get("ReplicationNotRead") or []
     report.add_section(
         "S3 Cross-Region Replication",
         f"**{len(s3['ReplicatedBuckets'])}** bucket(s) have replication configured; "
         f"**{len(s3['UnreplicatedBuckets'])}** do not (not every bucket needs replication -- "
-        f"treat this as a prompt to confirm intent per bucket, not a blanket gap).",
+        f"treat this as a prompt to confirm intent per bucket, not a blanket gap)."
+        + (
+            f" The scan was denied the replication setting of **{len(not_read)}** more "
+            "(see Access Gaps); they are in neither count."
+            if not_read
+            else ""
+        ),
     )
 
     hosted_zones = data.get("Global", {}).get("Route53HostedZones", [])

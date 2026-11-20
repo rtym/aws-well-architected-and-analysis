@@ -19,10 +19,13 @@ from pathlib import Path
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PLUGIN_ROOT))
 
+from botocore.exceptions import ClientError  # noqa: E402
+
 from shared.analysis import access  # noqa: E402
 from shared.analysis import checks as engine  # noqa: E402
 from shared.analysis import security_checks  # noqa: E402
 from shared.awslib.cli import base_parser, formats_tuple, make_context, resolve_regions, run  # noqa: E402
+from shared.awslib.session import PERMISSION_DENIED_CODES, ScanStopped  # noqa: E402
 from shared.awslib.collectors import (  # noqa: E402
     backup,
     cloudtrail,
@@ -67,6 +70,9 @@ def collect(ctx, regions: list[str], workload_id: str | None) -> dict:
     """One pass over every collector every pillar needs; the report layer
     picks out the fields relevant to whichever pillar(s) were requested."""
     evidence = {"Regions": {}, "Global": {}}
+    if workload_id:
+        # First, so a mistyped ID stops the run before the long collection.
+        evidence["Workload"] = _workload_snapshot(ctx, regions[0], workload_id)
     for region in regions:
         evidence["Regions"][region] = {
             "Network": vpc.collect_region_network(ctx, region),
@@ -80,15 +86,40 @@ def collect(ctx, regions: list[str], workload_id: str | None) -> dict:
         }
     evidence["Global"]["Security"] = security.collect_global_security(ctx)
     evidence["Global"]["DataStores"] = data_stores.collect_global_data_stores(ctx)
-    evidence["Global"]["Cost"] = cost.collect_cost_report(
-        ctx, *_default_cost_window()
-    )
+    evidence["Global"]["Cost"] = _cost_evidence(ctx)
     evidence["Global"]["CloudTrail"] = cloudtrail.cloudtrail_posture(ctx, regions[0])
-    if workload_id:
-        evidence["Workload"] = well_architected.collect_workload_snapshot(ctx, regions[0], workload_id)
     # Calls the run was denied: a zero count behind one of these is unread.
     evidence[access.KEY] = access.denied_calls(ctx)
     return evidence
+
+
+def _workload_snapshot(ctx, region: str, workload_id: str) -> dict:
+    try:
+        return well_architected.collect_workload_snapshot(ctx, region, workload_id)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") not in ("ResourceNotFoundException", "ValidationException"):
+            raise
+        raise ScanStopped(
+            f"Well-Architected Tool workload {workload_id!r} was not found in {region}.\n"
+            "  Check --workload-id. Workloads are regional: pass the workload's region as --region "
+            "or as the first --regions entry."
+        ) from exc
+
+
+def _cost_evidence(ctx) -> dict:
+    """Cost Explorer evidence for the Cost Optimization pillar. Cost
+    Explorer is often closed to member accounts; a denial there used to stop
+    the whole evidence pack. Now the pack loses only its Cost Explorer
+    evidence, the denial is listed under Access Gaps, and Budgets (a
+    separate API) is still read."""
+    try:
+        return cost.collect_cost_report(ctx, *_default_cost_window())
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code")
+        if code not in PERMISSION_DENIED_CODES:
+            raise
+        ctx.record_denied("collect_cost_report", None, code, exc.operation_name)
+        return {"Budgets": cost.budgets(ctx)}
 
 
 def _default_cost_window() -> tuple[str, str]:
@@ -101,23 +132,33 @@ def _default_cost_window() -> tuple[str, str]:
     return start.isoformat(), end.isoformat()
 
 
+def _readable(evidence: dict, region: str, key: str, show):
+    """`show(value)` for a security field the run could read, or "unknown"
+    when the call behind it was denied: the collector's empty default
+    (GuardDuty "False", zero findings) would otherwise print as a fact."""
+    readable = security_checks.readable_evidence(security_bundle(evidence))["Regions"].get(region, {}).get("Security", {})
+    if key not in readable:
+        return "unknown (access denied; see Access Gaps)"
+    return show(readable[key])
+
+
 PILLAR_EVIDENCE_SUMMARY = {
-    "operational-excellence": lambda ev, region_data: [
+    "operational-excellence": lambda ev, region, region_data: [
         f"- CloudWatch/Config visibility: {len(region_data['Security'].get('ConfigRuleCompliance', []))} Config rule evaluations found, Config recorder {'recording' if region_data['Security'].get('ConfigRecorder', {}).get('Recording') else 'NOT recording'}",
         f"- ECS/EKS workloads (deploy automation surface): {len(region_data['Containers']['EcsClusters'])} ECS clusters, {len(region_data['Containers']['EksClusters'])} EKS clusters",
         f"- Lambda functions (event-driven/IaC-friendly compute): {len(region_data['DataStores']['LambdaFunctions'])}",
         f"- CloudWatch alarms: {len(region_data['Observability']['Alarms'])} total, {len(region_data['Observability']['AlarmsWithNoActions'])} with no notification action, {len(region_data['Observability']['Dashboards'])} dashboards",
     ],
-    "security": lambda ev, region_data: [
-        f"- GuardDuty enabled: {region_data['Security']['GuardDuty']['Enabled']}",
-        f"- Security Hub enabled: {region_data['Security']['SecurityHub'].get('Enabled', False)}",
+    "security": lambda ev, region, region_data: [
+        f"- GuardDuty enabled: {_readable(ev, region, 'GuardDuty', lambda v: v['Enabled'])}",
+        f"- Security Hub enabled: {_readable(ev, region, 'SecurityHub', lambda v: v.get('Enabled', False))}",
         f"- Wide-open security group rules: {len(region_data['Network']['WideOpenSecurityGroupRules'])}",
-        f"- IAM Access Analyzer active findings: {len(region_data['Security'].get('AccessAnalyzerFindings', []))}",
+        f"- IAM Access Analyzer active findings: {_readable(ev, region, 'AccessAnalyzerFindings', len)}",
         f"- EC2 instances not enforcing IMDSv2: {len(region_data['Compute'].get('InstancesAllowingImdsv1', []))}",
         f"- Load balancer listeners without TLS: {len(region_data['Compute'].get('PlaintextListeners', []))}",
         f"- ACM certificates expired or expiring within 30 days: {len(region_data['Compute'].get('ExpiringCertificates', []))}",
     ],
-    "reliability": lambda ev, region_data: [
+    "reliability": lambda ev, region, region_data: [
         f"- Auto Scaling groups: {len(region_data['Compute']['AutoScalingGroups'])}",
         f"- Load balancers (ALB/NLB + classic): {len(region_data['Compute']['LoadBalancersV2']) + len(region_data['Compute']['ClassicLoadBalancers'])}",
         f"- Multi-AZ signal -- RDS instances: {len(region_data['DataStores']['RdsInstances'])}, manual snapshots: {len(region_data['DataStores']['RdsManualSnapshots'])}",
@@ -126,18 +167,18 @@ PILLAR_EVIDENCE_SUMMARY = {
         f"- AWS Backup plans covering this region: {len(region_data['Backup']['BackupPlans'])} ({len(region_data['Backup']['PlansWithCrossRegionCopy'])} with cross-region copy), {len(region_data['Backup']['FailedJobsRecent'])} recent failed jobs",
         f"- Service Quota headroom checked for: {', '.join(q['Label'] for q in region_data['Quotas']) or 'no quota data returned'}",
     ],
-    "performance-efficiency": lambda ev, region_data: [
+    "performance-efficiency": lambda ev, region, region_data: [
         f"- EC2 instances: {len(region_data['Compute']['Instances'])}",
         f"- VPC endpoints (reduces NAT/internet hairpin latency): {len(region_data['Network']['VpcEndpoints'])}",
         f"- ElastiCache clusters: {len(region_data['DataStores']['ElastiCacheClusters'])}",
         f"- DynamoDB tables: {len(region_data['DataStores']['DynamoDbTables'])}",
     ],
-    "cost-optimization": lambda ev, region_data: [
+    "cost-optimization": lambda ev, region, region_data: [
         f"- Unattached EBS volumes: {len(region_data['Compute']['UnattachedVolumes'])}",
         f"- Unassociated Elastic IPs: {len(region_data['Compute']['UnassociatedEips'])}",
         f"- Stopped EC2 instances (still billed for EBS): {len(region_data['Compute']['StoppedInstances'])}",
     ],
-    "sustainability": lambda ev, region_data: [
+    "sustainability": lambda ev, region, region_data: [
         f"- Stopped instances retaining attached storage: {len(region_data['Compute']['StoppedInstances'])}",
         f"- Unattached EBS volumes (wasted provisioned capacity): {len(region_data['Compute']['UnattachedVolumes'])}",
         f"- Manual RDS snapshots retained indefinitely: {len(region_data['DataStores']['RdsManualSnapshots'])}",
@@ -251,7 +292,7 @@ def build_report(evidence: dict, pillars: list[str]) -> Report:
         body = []
         for region, region_data in evidence["Regions"].items():
             body.append(f"\n**Region {region}:**\n")
-            body.extend(PILLAR_EVIDENCE_SUMMARY[pillar](evidence, region_data))
+            body.extend(PILLAR_EVIDENCE_SUMMARY[pillar](evidence, region, region_data))
         report.add_section(pillar.replace("-", " ").title(), "\n".join(body))
         if pillar == "security":
             report.add_section("Security Baseline Checks", _security_check_section(evidence), level=3)
@@ -272,6 +313,7 @@ def build_report(evidence: dict, pillars: list[str]) -> Report:
 
     ct = evidence["Global"].get("CloudTrail", {})
     if ct:
+        not_read = ct.get("TrailStatusNotRead") or []
         report.add_section(
             "Account-wide CloudTrail Evidence (Security SEC01/SEC04, Operational Excellence OPS04)",
             "\n".join(
@@ -281,6 +323,11 @@ def build_report(evidence: dict, pillars: list[str]) -> Report:
                     f"- A multi-region trail is logging: {ct.get('HasLoggingMultiRegionTrail')}",
                     f"- Log file validation enabled: {ct.get('HasLogFileValidation')}",
                 ]
+                + (
+                    [f"- Trails whose status the run was denied: {len(not_read)}, so \"False\" above may be unknown (see Access Gaps)"]
+                    if not_read
+                    else []
+                )
             ),
         )
 
@@ -292,7 +339,13 @@ def build_report(evidence: dict, pillars: list[str]) -> Report:
         else "No AWS Budgets configured -- COST01/COST03 evidence gap.",
     )
 
-    if "Workload" in evidence:
+    if "Workload" in evidence and evidence["Workload"].get("Workload") is None:
+        report.add_section(
+            "Well-Architected Tool Cross-Reference",
+            "The workload couldn't be read: the run was denied the Well-Architected Tool calls "
+            "(see Access Gaps).",
+        )
+    elif "Workload" in evidence:
         workload = evidence["Workload"]["Workload"]
         improvements = evidence["Workload"]["ImprovementsByPillar"]
         # WorkloadName is free text set by whoever created the workload --
