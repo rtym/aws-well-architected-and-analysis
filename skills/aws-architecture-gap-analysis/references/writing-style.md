@@ -3,7 +3,7 @@
 These rules apply to every artifact a skill in this plugin hands a human:
 gap analyses, findings reports, strategy write-ups, and any prose added on
 top of a script-generated report. The generated reports follow them by
-construction (`shared/reporting/`), and `bin/lint-report-prose` checks a
+construction (`shared/reporting/`), and `tools/lint-report-prose` checks a
 finished report deterministically -- but most report prose is authored by
 Claude, which is why this document exists. Load it before writing, not
 after.
@@ -48,7 +48,7 @@ after.
 
 ## What the lint enforces
 
-`bin/lint-report-prose <dir>` (also run by `tests/test_prose_quality.py`
+`tools/lint-report-prose <dir>` (also run by `tests/test_prose_quality.py`
 against every skill's rendered report) fails a report for: banned filler
 vocabulary, unfilled template placeholders (`<AccountId>`, `{{name}}`,
 `TODO`), the same prose line repeated back-to-back, a section heading

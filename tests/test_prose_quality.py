@@ -322,7 +322,7 @@ def test_traffic_report_includes_severity_legend_for_guardduty_findings():
     assert "**MEDIUM** = plan a fix this quarter" in md
 
 
-# ----------------------------------------------------- the lint CLI (bin/)
+# ----------------------------------------------------- the lint CLI (tools/)
 def test_lint_cli_fails_on_a_bad_report_and_passes_a_clean_one(tmp_path):
     bad = tmp_path / "a-bad.md"
     bad.write_text("# T\n\n## No Intro\n\nWe leverage robust synergy. TODO: numbers.\n")
@@ -330,7 +330,7 @@ def test_lint_cli_fails_on_a_bad_report_and_passes_a_clean_one(tmp_path):
     good.write_text("# T\n\nCovers one account. Start with the summary.\n\n## Summary\n\n3 findings.\n")
 
     proc = subprocess.run(
-        [sys.executable, str(ROOT / "bin" / "lint-report-prose"), str(tmp_path)],
+        [sys.executable, str(ROOT / "tools" / "lint-report-prose"), str(tmp_path)],
         capture_output=True,
         text=True,
     )
@@ -344,7 +344,7 @@ def test_lint_cli_fails_on_a_bad_report_and_passes_a_clean_one(tmp_path):
 
     bad.unlink()
     proc = subprocess.run(
-        [sys.executable, str(ROOT / "bin" / "lint-report-prose"), str(tmp_path)],
+        [sys.executable, str(ROOT / "tools" / "lint-report-prose"), str(tmp_path)],
         capture_output=True,
         text=True,
     )
@@ -353,7 +353,7 @@ def test_lint_cli_fails_on_a_bad_report_and_passes_a_clean_one(tmp_path):
 
 def test_lint_cli_exits_nonzero_when_nothing_to_lint(tmp_path):
     proc = subprocess.run(
-        [sys.executable, str(ROOT / "bin" / "lint-report-prose"), str(tmp_path)],
+        [sys.executable, str(ROOT / "tools" / "lint-report-prose"), str(tmp_path)],
         capture_output=True,
         text=True,
     )

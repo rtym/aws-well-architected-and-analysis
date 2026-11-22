@@ -2,27 +2,19 @@
 name: aws-security-review
 description: >
   Verify AWS security posture and find gaps: GuardDuty, Security Hub,
-  Inspector, and Macie enablement + active findings, Security Hub
-  standards compliance (CIS AWS Foundations, AWS Foundational Security
-  Best Practices, PCI DSS), IAM Access Analyzer findings, AWS Config rule
-  compliance and whether the Config recorder is even running, CloudTrail
-  posture (multi-region trail, actively logging, log file validation),
-  IAM hygiene (MFA, access keys older than 90 days, root account risk,
-  password policy), public/unencrypted S3 buckets and the account-level
-  Block Public Access backstop, security groups open to 0.0.0.0/0 or ::/0
-  and default security groups with rules, EBS encryption-by-default and
-  publicly restorable EBS/RDS snapshots, publicly accessible or
-  unencrypted RDS instances, customer-managed KMS keys without rotation,
-  Lambda function URLs without auth, EC2 instances not enforcing IMDSv2,
-  load balancer listeners without TLS, and ACM certificates expired or
-  expiring within 30 days -- then score the posture with 31 checks mapped
-  to Security Hub controls, correlate gaps into attack paths, rank every
-  fix in one priority list, and produce a Markdown/HTML/PDF security report
-  with charts. Use this skill when
-  someone asks for a "security review", "security posture assessment",
-  "check GuardDuty", "check Security Hub", "find security gaps", "IAM
-  audit", "is this account secure", "security recommendations", "check
-  CloudTrail", "check IMDSv2", or "compliance check" (CIS/PCI/FSBP).
+  Inspector, and Macie enablement and findings; Security Hub standards
+  (CIS, AWS Foundational Security Best Practices, PCI DSS); IAM Access
+  Analyzer; AWS Config rules and recorder; CloudTrail posture; IAM hygiene
+  (MFA, old access keys, root, password policy); public or unencrypted S3,
+  EBS, RDS, and snapshots; open security groups; KMS key rotation; Lambda
+  function URLs without auth; IMDSv2; load balancer TLS; and expiring ACM
+  certificates. Scores 31 checks mapped to Security Hub controls, correlates
+  gaps into attack paths, ranks every fix in one priority list, and produces
+  a Markdown/HTML/PDF report with charts. Use this skill when someone asks
+  for a "security review", "security posture assessment", "check
+  GuardDuty", "check Security Hub", "find security gaps", "IAM audit", "is
+  this account secure", "security recommendations", "check CloudTrail",
+  "check IMDSv2", or "compliance check" (CIS/PCI/FSBP).
 ---
 
 # AWS Security Review
@@ -52,7 +44,7 @@ sweep).
 ### Step 1 -- Run the collector
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/bin/run-skill-script ${CLAUDE_PLUGIN_ROOT}/skills/aws-security-review/scripts/security_scan.py \
+${CLAUDE_PLUGIN_ROOT}/tools/run-skill-script ${CLAUDE_PLUGIN_ROOT}/skills/aws-security-review/scripts/security_scan.py \
   --profile <profile> \
   --regions us-east-1,eu-west-1 \
   --json-out reports/output/security-evidence.json \

@@ -13,7 +13,7 @@ jobs:
       fail-fast: false
       matrix:
         # 3.11 is the floor the README advertises; 3.14 is the newest
-        # release, and the one bin/run-skill-script prefers when present.
+        # release, and the one tools/run-skill-script prefers when present.
         python-version: ["3.11", "3.12", "3.13", "3.14"]
 
     steps:

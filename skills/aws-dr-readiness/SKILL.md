@@ -49,7 +49,7 @@ Read-only. See `${CLAUDE_PLUGIN_ROOT}/PERMISSIONS.md` for the IAM policy.
 ### Step 1 -- Run the collector
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/bin/run-skill-script ${CLAUDE_PLUGIN_ROOT}/skills/aws-dr-readiness/scripts/dr_readiness.py \
+${CLAUDE_PLUGIN_ROOT}/tools/run-skill-script ${CLAUDE_PLUGIN_ROOT}/skills/aws-dr-readiness/scripts/dr_readiness.py \
   --profile <profile> \
   --regions us-east-1,eu-west-1 \
   --json-out reports/output/dr-evidence.json \

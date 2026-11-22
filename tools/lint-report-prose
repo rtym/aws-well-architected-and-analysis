@@ -2,8 +2,8 @@
 """Lint every generated Markdown report under a directory (or one file).
 
 Usage:
-    bin/lint-report-prose reports/output
-    bin/lint-report-prose reports/output/security-review.md --no-require-intro
+    tools/lint-report-prose reports/output
+    tools/lint-report-prose reports/output/security-review.md --no-require-intro
 
 Walks the given paths in one sorted-order pass, lints each .md file with
 shared.reporting.prose_lint (banned machine-voice filler, unfilled template

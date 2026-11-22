@@ -11,7 +11,7 @@ source; table rows carry AWS-sourced data (finding titles, resource names)
 that the plugin quotes rather than writes -- both are exempt by design.
 
 Used by tests/test_prose_quality.py against every skill's rendered report,
-and by bin/lint-report-prose against a directory of real generated reports.
+and by tools/lint-report-prose against a directory of real generated reports.
 """
 from __future__ import annotations
 
