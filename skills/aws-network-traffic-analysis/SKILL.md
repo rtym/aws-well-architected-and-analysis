@@ -54,7 +54,7 @@ against existing log data; it does not modify anything. See
 ### Step 1 -- Run the collector
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/bin/run-skill-script ${CLAUDE_PLUGIN_ROOT}/skills/aws-network-traffic-analysis/scripts/traffic_analysis.py \
+${CLAUDE_PLUGIN_ROOT}/tools/run-skill-script ${CLAUDE_PLUGIN_ROOT}/skills/aws-network-traffic-analysis/scripts/traffic_analysis.py \
   --profile <profile> \
   --region us-east-1 \
   --log-group /vpc/flow-logs/vpc-0123abcd \

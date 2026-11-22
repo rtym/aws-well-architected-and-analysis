@@ -101,28 +101,28 @@ def test_skill_scripts_are_executable_python(skill_md):
 def test_scripts_run_through_the_venv_launcher(skill_md):
     """A bare `python script.py` fails on a marketplace install: `python`
     may not exist (stock macOS) and nothing has installed requirements.txt.
-    Every invocation must go through bin/run-skill-script instead."""
+    Every invocation must go through tools/run-skill-script instead."""
     text = skill_md.read_text()
     bare = re.findall(r"^\s*python3?\s+\S+\.py", text, flags=re.MULTILINE)
     assert not bare, f"{skill_md} invokes a script without the launcher: {bare}"
     for line in re.findall(r"^.*/scripts/\w+\.py.*$", text, flags=re.MULTILINE):
         if line.lstrip().startswith("${CLAUDE_PLUGIN_ROOT}/"):
-            assert line.lstrip().startswith("${CLAUDE_PLUGIN_ROOT}/bin/run-skill-script "), line
+            assert line.lstrip().startswith("${CLAUDE_PLUGIN_ROOT}/tools/run-skill-script "), line
 
 
 def test_venv_launcher_is_executable():
-    launcher = ROOT / "bin" / "run-skill-script"
+    launcher = ROOT / "tools" / "run-skill-script"
     assert launcher.is_file() and os.access(launcher, os.X_OK)
 
 
 def test_launcher_tries_every_python_the_ci_matrix_tests():
-    """bin/run-skill-script chooses the interpreter for users; CI is what
+    """tools/run-skill-script chooses the interpreter for users; CI is what
     proves a version works. 3.14 passed locally but the launcher never tried
     it, so a machine with only python3.14 installed was told no suitable
     Python existed. Newest first, so the best-supported interpreter wins."""
     workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "tests.yml").read_text())
     tested = workflow["jobs"]["test"]["strategy"]["matrix"]["python-version"]
-    launcher = (ROOT / "bin" / "run-skill-script").read_text()
+    launcher = (ROOT / "tools" / "run-skill-script").read_text()
     candidates = re.search(r"for candidate in ([^;]+);", launcher).group(1).split()
     for version in tested:
         assert f"python{version}" in candidates
@@ -141,6 +141,48 @@ def test_plugin_manifest_is_valid_json_with_required_fields():
 def test_plugin_manifest_name_matches_repo_directory():
     manifest = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())
     assert manifest["name"] == ROOT.name
+
+
+# claude.ai and Cowork validate a plugin when its marketplace is added, and
+# reject the whole plugin ("1 plugin failed validation") without naming the
+# rule. Claude Code accepts all of these, so `claude plugin validate` passes.
+# The limits come from the Agent Skills spec and the claude.ai plugin upload
+# rules: https://platform.claude.com/docs/en/manage-claude/plugins-api
+SKILL_NAME_MAX = 64
+SKILL_DESCRIPTION_MAX = 1024
+PLUGIN_DESCRIPTION_MAX = 500
+
+
+@pytest.mark.parametrize("skill_md", SKILL_FILES, ids=lambda p: p.parent.name)
+def test_skill_name_is_valid_on_claude_ai(skill_md):
+    name = _frontmatter(skill_md)["name"]
+    assert len(name) <= SKILL_NAME_MAX, name
+    assert re.fullmatch(r"[a-z0-9-]+", name), f"{name!r}: lowercase letters, digits and hyphens only"
+    assert "claude" not in name and "anthropic" not in name, f"{name!r} uses a reserved word"
+
+
+@pytest.mark.parametrize("skill_md", SKILL_FILES, ids=lambda p: p.parent.name)
+def test_skill_description_is_valid_on_claude_ai(skill_md):
+    description = _frontmatter(skill_md).get("description") or ""
+    assert description.strip(), f"{skill_md} has an empty description"
+    assert len(description) <= SKILL_DESCRIPTION_MAX, (
+        f"{skill_md}: description is {len(description)} characters; claude.ai rejects more than {SKILL_DESCRIPTION_MAX}"
+    )
+    assert not re.search(r"[<>]", description), f"{skill_md}: claude.ai reads angle brackets as XML tags"
+
+
+def test_plugin_description_is_valid_on_claude_ai():
+    manifest = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())
+    marketplace = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text())
+    for description in [manifest["description"]] + [p["description"] for p in marketplace["plugins"]]:
+        assert len(description) <= PLUGIN_DESCRIPTION_MAX, len(description)
+        assert not re.search(r"[<>]", description), description
+
+
+def test_no_top_level_bin_directory():
+    """claude.ai refuses a plugin with any file under a top-level bin/, so
+    the launchers live in tools/."""
+    assert not (ROOT / "bin").exists()
 
 
 @pytest.mark.parametrize("skill_md", SKILL_FILES, ids=lambda p: p.parent.name)

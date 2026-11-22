@@ -44,7 +44,7 @@ under the hood -- the script handles that automatically).
 ### Step 1 -- Run the collector
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/bin/run-skill-script ${CLAUDE_PLUGIN_ROOT}/skills/aws-cost-optimization/scripts/analyze_cost.py \
+${CLAUDE_PLUGIN_ROOT}/tools/run-skill-script ${CLAUDE_PLUGIN_ROOT}/skills/aws-cost-optimization/scripts/analyze_cost.py \
   --profile <profile> \
   --lookback-days 90 \
   --compute-optimizer-regions us-east-1,eu-west-1 \

@@ -59,7 +59,7 @@ Confirm with the user (if not already stated):
 ### Step 1 -- Run the collector
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/bin/run-skill-script ${CLAUDE_PLUGIN_ROOT}/skills/aws-architecture-discovery/scripts/discover.py \
+${CLAUDE_PLUGIN_ROOT}/tools/run-skill-script ${CLAUDE_PLUGIN_ROOT}/skills/aws-architecture-discovery/scripts/discover.py \
   --profile <profile> \
   --regions us-east-1,eu-west-1 \
   --json-out reports/output/architecture-inventory.json \

@@ -2,6 +2,14 @@
 
 Notable changes to this plugin. Versions track `.claude-plugin/plugin.json`.
 
+## [1.9.0] - 2026-11-22
+
+### Fixed
+- Adding the marketplace in the Claude app (Customize > Plugins) failed with "1 plugin failed validation", although Claude Code accepted it. Two parts broke claude.ai's rules: the `aws-security-review` skill description was 1,490 characters (the limit is 1,024), and the plugin had a top-level `bin/` folder, which claude.ai refuses. The description is shorter, and the launchers moved to `tools/` (`tools/run-skill-script`, `tools/lint-report-prose`).
+
+### Added
+- Tests for the claude.ai limits: skill names and descriptions, the plugin description, and no top-level `bin/`.
+
 ## [1.8.0] - 2026-11-20
 
 ### Fixed

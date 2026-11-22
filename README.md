@@ -118,7 +118,7 @@ skills to be picked up.
 
 The skill scripts need Python 3.11+ and the packages in `requirements.txt`
 (`boto3`, `matplotlib`, `markdown`, `weasyprint`). You don't install these by
-hand: every skill runs its script through `bin/run-skill-script`, which on
+hand: every skill runs its script through `tools/run-skill-script`, which on
 first use creates a private virtualenv and installs `requirements.txt` into it.
 That takes about a minute; later runs reuse it, and it is rebuilt automatically
 when `requirements.txt` changes. The virtualenv lives outside the plugin
@@ -219,7 +219,7 @@ number. The Markdown file carries the same content as plain text and
 tables.
 
 Reports open with an orientation paragraph and define the severity levels
-they use; `bin/lint-report-prose reports/output` re-checks a batch of
+they use; `tools/lint-report-prose reports/output` re-checks a batch of
 generated reports against the plugin's writing rules (filler vocabulary,
 unfilled placeholders, duplicated lines) in one sorted-order pass, exiting
 non-zero on any failure.

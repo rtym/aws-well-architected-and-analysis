@@ -221,7 +221,7 @@ banned filler vocabulary, unfilled template placeholders, duplicated
 lines/headings, and a required orientation paragraph before the first
 section. `tests/test_prose_quality.py` runs it over every skill's rendered
 report *and* the plugin's own Markdown. To check real generated output,
-run `bin/lint-report-prose reports/output`.
+run `tools/lint-report-prose reports/output`.
 
 Practical consequences when you touch a `build_report()`:
 

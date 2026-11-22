@@ -50,7 +50,7 @@ view ${CLAUDE_PLUGIN_ROOT}/skills/aws-architecture-gap-analysis/references/writi
 ### Step 1 -- Run the collector
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/bin/run-skill-script ${CLAUDE_PLUGIN_ROOT}/skills/aws-organizations-posture/scripts/analyze_organization.py \
+${CLAUDE_PLUGIN_ROOT}/tools/run-skill-script ${CLAUDE_PLUGIN_ROOT}/skills/aws-organizations-posture/scripts/analyze_organization.py \
   --profile <profile> \
   --region us-east-1 \
   --json-out reports/output/organizations-evidence.json \

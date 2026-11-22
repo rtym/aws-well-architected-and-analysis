@@ -64,7 +64,7 @@ directly rather than guessed at.
 ### Step 1 -- Collect evidence
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/bin/run-skill-script ${CLAUDE_PLUGIN_ROOT}/skills/aws-well-architected-review/scripts/collect_evidence.py \
+${CLAUDE_PLUGIN_ROOT}/tools/run-skill-script ${CLAUDE_PLUGIN_ROOT}/skills/aws-well-architected-review/scripts/collect_evidence.py \
   --profile <profile> \
   --pillar all \
   --regions us-east-1 \
